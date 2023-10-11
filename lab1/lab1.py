@@ -101,8 +101,8 @@ def send_flag(flag, client_socket):
     # client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     # client_socket.connect((server_host, server_port))
     
-    start_index = flag.find("{") + 1
-    end_index = flag.find("}")
+    # start_index = flag.find("{") + 1
+    # end_index = flag.find("}")
     # flag = flag[start_index:end_index]
     pcap_file = "verfy.pcap"
     tcpdump_command = [
