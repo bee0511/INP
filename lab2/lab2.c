@@ -6,7 +6,7 @@
 #include <math.h>
 #include <string.h>
 
-#define DEBUG 0
+// #define DEBUG 0
 
 typedef struct
 {
@@ -81,14 +81,14 @@ int main(int argc, char *argv[])
     int b_read = read(fp, &hdr, sizeof(binflag_header_t));
     hdr.n_blocks = convert_indian_u16(hdr.n_blocks);
     hdr.datasize = convert_indian_u32(hdr.datasize);
+    printf("\n"); // idk why i cannot comment this line, or it will say malloc(): corrupted top size
 // Dump parsed hdr
 #ifdef DEBUG
+    printf("[DEBUG] Magic: %lx\n", hdr.magic);
+    printf("[DEBUG] datasize: %d\n", hdr.datasize);
+    printf("[DEBUG] n_blocks: %x\n", hdr.n_blocks);
+    printf("[DEBUG] zeros: %x\n", hdr.zeros);
     printf("[DEBUG] ----------------------------------\n");
-    // printf("[DEBUG] Magic: %lx\n", hdr.magic);
-    // printf("[DEBUG] datasize: %d\n", hdr.datasize);
-    // printf("[DEBUG] n_blocks: %x\n", hdr.n_blocks);
-    // printf("[DEBUG] zeros: %x\n", hdr.zeros);
-    // printf("[DEBUG] ----------------------------------\n");
 #endif
 
     // Read and output files
@@ -103,24 +103,24 @@ int main(int argc, char *argv[])
         block_entries->offset = convert_indian_u32(block_entries->offset);
         block_entries->cksum = convert_indian_u16(block_entries->cksum);
 #ifdef DEBUG
-// printf("[DEBUG] ----------------------------------\n");
-// printf("[DEBUG] Block Entry %d\n", i);
-// printf("[DEBUG] Block Offset: 0x%x\n", block_entries->offset);
-// printf("[DEBUG] Block Checksum: 0x%x\n", block_entries->cksum);
-// printf("[DEBUG] Block length: %d\n", block_entries->length);
-// printf("[DEBUG] ----------------------------------\n");
+        printf("[DEBUG] ----------------------------------\n");
+        printf("[DEBUG] Block Entry %d\n", i);
+        printf("[DEBUG] Block Offset: 0x%x\n", block_entries->offset);
+        printf("[DEBUG] Block Checksum: 0x%x\n", block_entries->cksum);
+        printf("[DEBUG] Block length: %d\n", block_entries->length);
+        printf("[DEBUG] ----------------------------------\n");
 #endif
 
         // Read payload data directly into the block_entries[i].payload field
         b_read = read(fp, block_entries->payload, block_entries->length);
 
 #ifdef DEBUG
-        // printf("[DEBUG] payload: ");
-        // for (int j = 0; j < block_entries->length; j++)
-        // {
-        //     printf("%x ", block_entries->payload[j]);
-        // }
-        // printf("\n");
+        printf("[DEBUG] Block payload: ");
+        for (int j = 0; j < block_entries->length; j++)
+        {
+            printf("%x ", block_entries->payload[j]);
+        }
+        printf("\n");
 #endif
         uint16_t xored_val = 0;
         for (int j = 0; j < block_entries->length; j += 2)
@@ -128,7 +128,7 @@ int main(int argc, char *argv[])
             xored_val ^= (block_entries->payload[j] << 8) + block_entries->payload[j + 1];
         }
 #ifdef DEBUG
-        // printf("[DEBUG] xored_val: 0x%x\n", xored_val);
+        printf("[DEBUG] xored_val: 0x%x\n", xored_val);
 #endif
         if (xored_val == block_entries->cksum)
         {
@@ -137,20 +137,18 @@ int main(int argc, char *argv[])
         }
     }
 #ifdef DEBUG
-    // printf("[DEBUG] dict: ");
-    // for (int i = 0; i < hdr.datasize; i++)
-    // {
-    //     printf("%x ", dict[i]);
-    // }
-    // printf("\n");
+    printf("[DEBUG] dict: ");
+    for (int i = 0; i < hdr.datasize; i++)
+    {
+        printf("%x ", dict[i]);
+    }
+    printf("\n");
 #endif
     uint16_t flag;
     b_read = read(fp, &flag, sizeof(flag));
     flag = convert_indian_u16(flag);
 #ifdef DEBUG
-    // printf("[DEBUG] Flag Length: %d\n", flag);
-    // // printf("[DEBUG] Flag Offset: %x\n", flag.offset);
-    // printf("[DEBUG] ----------------------------------\n");
+    printf("[DEBUG] Flag Length: %d\n", flag);
 #endif
     uint32_t flag_payload[flag];
     memset(flag_payload, 0, flag * sizeof(uint32_t));
@@ -158,15 +156,18 @@ int main(int argc, char *argv[])
     {
         read(fp, &flag_payload[i], sizeof(uint32_t));
         flag_payload[i] = convert_indian_u32(flag_payload[i]);
-        // printf("%d ", flag_payload[i]);
+#ifdef DEBUG
+        printf("%d ", flag_payload[i]);
+#endif
     }
-    printf("\nflag:");
     uint16_t ans[flag];
     memset(ans, 0, flag * sizeof(uint16_t));
     for (int i = 0; i < flag; i++)
     {
         ans[i] = (dict[flag_payload[i]] << 8) + dict[flag_payload[i] + 1];
-        // printf("%x %x\n", dict[flag_payload[i]],  dict[flag_payload[i] + 1]);
+#ifdef DEBUG
+        printf("%x %x\n", dict[flag_payload[i]], dict[flag_payload[i] + 1]);
+#endif
         printf("%04x", ans[i]);
     }
     printf("\n\n");
