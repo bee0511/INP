@@ -4,3 +4,4 @@ Dockerfile
 .venv
 *.bin
 demo
+*.zip

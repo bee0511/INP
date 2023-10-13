@@ -81,96 +81,61 @@ int main(int argc, char *argv[])
     int b_read = read(fp, &hdr, sizeof(binflag_header_t));
     hdr.n_blocks = convert_indian_u16(hdr.n_blocks);
     hdr.datasize = convert_indian_u32(hdr.datasize);
-    printf("\n"); // idk why i cannot comment this line, or it will say malloc(): corrupted top size
-// Dump parsed hdr
-#ifdef DEBUG
-    printf("[DEBUG] Magic: %lx\n", hdr.magic);
-    printf("[DEBUG] datasize: %d\n", hdr.datasize);
-    printf("[DEBUG] n_blocks: %x\n", hdr.n_blocks);
-    printf("[DEBUG] zeros: %x\n", hdr.zeros);
-    printf("[DEBUG] ----------------------------------\n");
-#endif
 
     // Read and output files
     uint8_t *dict = (uint8_t *)malloc(hdr.datasize);
     memset(dict, 0, hdr.datasize);
-    block_t *block_entries = (block_t *)malloc(sizeof(block_t));
 
     for (int i = 0; i < hdr.n_blocks; ++i)
     {
+        block_t *block_entries = (block_t *)malloc(sizeof(block_t));
+
         b_read = read(fp, block_entries, sizeof(block_t));
         block_entries->length = convert_indian_u16(block_entries->length);
         block_entries->offset = convert_indian_u32(block_entries->offset);
         block_entries->cksum = convert_indian_u16(block_entries->cksum);
-#ifdef DEBUG
-        printf("[DEBUG] ----------------------------------\n");
-        printf("[DEBUG] Block Entry %d\n", i);
-        printf("[DEBUG] Block Offset: 0x%x\n", block_entries->offset);
-        printf("[DEBUG] Block Checksum: 0x%x\n", block_entries->cksum);
-        printf("[DEBUG] Block length: %d\n", block_entries->length);
-        printf("[DEBUG] ----------------------------------\n");
-#endif
 
         // Read payload data directly into the block_entries[i].payload field
+        block_entries = realloc(block_entries, sizeof(block_t) + block_entries->length * sizeof(uint8_t));
         b_read = read(fp, block_entries->payload, block_entries->length);
 
-#ifdef DEBUG
-        printf("[DEBUG] Block payload: ");
-        for (int j = 0; j < block_entries->length; j++)
-        {
-            printf("%x ", block_entries->payload[j]);
-        }
-        printf("\n");
-#endif
         uint16_t xored_val = 0;
         for (int j = 0; j < block_entries->length; j += 2)
         {
             xored_val ^= (block_entries->payload[j] << 8) + block_entries->payload[j + 1];
         }
-#ifdef DEBUG
-        printf("[DEBUG] xored_val: 0x%x\n", xored_val);
-#endif
+
         if (xored_val == block_entries->cksum)
         {
             // Copy the payload data to the dictionary buffer
-            memcpy(dict + block_entries->offset, block_entries->payload, block_entries->length);
+            memcpy(dict + block_entries->offset, block_entries->payload, block_entries->length * sizeof(uint8_t));
         }
+        free(block_entries);
     }
-#ifdef DEBUG
-    printf("[DEBUG] dict: ");
-    for (int i = 0; i < hdr.datasize; i++)
+
+    flag_t* flag = (flag_t*)malloc(sizeof(flag_t));
+    b_read = read(fp, flag, sizeof(flag_t)); // only header!!
+    flag->length = convert_indian_u16(flag->length);
+
+    flag = realloc(flag, sizeof(flag_t) + flag->length * sizeof(uint32_t));
+    memset(flag->offset, 0, flag->length * sizeof(uint32_t));
+    read(fp, flag->offset, flag->length * sizeof(uint32_t));
+    for (int i = 0; i < flag->length; i++)
     {
-        printf("%x ", dict[i]);
+        flag->offset[i] = convert_indian_u32(flag->offset[i]);
+
     }
-    printf("\n");
-#endif
-    uint16_t flag;
-    b_read = read(fp, &flag, sizeof(flag));
-    flag = convert_indian_u16(flag);
-#ifdef DEBUG
-    printf("[DEBUG] Flag Length: %d\n", flag);
-#endif
-    uint32_t flag_payload[flag];
-    memset(flag_payload, 0, flag * sizeof(uint32_t));
-    for (int i = 0; i < flag; i++)
+    uint16_t ans[flag->length];
+    memset(ans, 0, flag->length * sizeof(uint16_t));
+    for (int i = 0; i < flag->length; i++)
     {
-        read(fp, &flag_payload[i], sizeof(uint32_t));
-        flag_payload[i] = convert_indian_u32(flag_payload[i]);
-#ifdef DEBUG
-        printf("%d ", flag_payload[i]);
-#endif
-    }
-    uint16_t ans[flag];
-    memset(ans, 0, flag * sizeof(uint16_t));
-    for (int i = 0; i < flag; i++)
-    {
-        ans[i] = (dict[flag_payload[i]] << 8) + dict[flag_payload[i] + 1];
-#ifdef DEBUG
-        printf("%x %x\n", dict[flag_payload[i]], dict[flag_payload[i] + 1]);
-#endif
+        ans[i] = (dict[flag->offset[i]] << 8) + dict[flag->offset[i] + 1];
+
         printf("%04x", ans[i]);
     }
-    printf("\n\n");
+    
+    free(flag);
+    free(dict);
 
     close(fp);
 
