@@ -5,3 +5,4 @@ Dockerfile
 *.bin
 demo
 *.zip
+test.py
