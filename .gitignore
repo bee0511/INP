@@ -6,3 +6,5 @@ Dockerfile
 demo
 *.zip
 test.py
+__pycache__
+.vscode
