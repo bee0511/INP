@@ -6,6 +6,7 @@ WALL = "#"
 PATH = "."
 EXIT = "E"
 START = "*"
+EMPTY_SPACE = " "
 
 # Server connection setup
 server_address = "inp.zoolab.org"
@@ -14,12 +15,13 @@ client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client_socket.connect((server_address, server_port))
 
 # Initialize total_maze with the small maze in the middle
-total_maze_size = 201
-total_maze = [[' ' for _ in range(total_maze_size)] for _ in range(total_maze_size)]
+maze_size = 201
+maze = [[' ' for _ in range(maze_size)] for _ in range(maze_size)]
+visited = [[False for _ in range(maze_size)] for _ in range(maze_size)]
+current_x = 100
+current_y = 100
+find_exit = False
 
-# Initial position for the small maze
-small_maze_x = total_maze_size // 2 - 3
-small_maze_y = total_maze_size // 2 - 5
 
 def receiveServerReply():
     server_reply = ""
@@ -36,96 +38,106 @@ def mazeParser(maze_data):
     lines = maze_data.split("\n")
     i = 0
     for line in lines:
-        if not line.startswith("   "):
+        if not line.startswith("  "):
             continue
-        row_parts = line.split(": ")
-        row_data = row_parts[1].strip()
+        row_data = ""
+        for j in range(7, 18):
+            if line[j] == 'a':
+                break
+            row_data += line[j]
         if row_data == "":
-            break
+            continue
         maze[i] += row_data
         i = i + 1
         if i == 7:
             break
+    # print(maze)
     return maze
 
 def printMaze(maze):
     for row in maze:
-        print(''.join(row))
+        if "#" in row:
+            print(''.join(row))
 
-def dfs_explore(maze, x, y, path, visited):
-    if x == 0 or y == 0 or x == len(maze) - 1 or y == len(maze[0]) - 1:
-        return path
-
-    moves = [(-1, 0), (0, -1), (1, 0), (0, 1)]
-    move_symbols = ['W', 'A', 'S', 'D']
-    
-    for move, (dx, dy) in enumerate(moves):
-        new_x, new_y = x + dx, y + dy
-        if 0 <= new_x < len(maze) and 0 <= new_y < len(maze[0]) and maze[new_x][new_y] != WALL and not visited[new_x][new_y]:
-            visited[new_x][new_y] = True
-            path.append(move_symbols[move])
-            result = dfs_explore(maze, new_x, new_y, path, visited)
-            if result is not None:
-                return result
-            path.pop()
-
-    return None
-
-def solveMazeWithDFS(maze):
-    # Set the initial position to the middle of the small maze
-    start_x, start_y = len(maze) // 2, len(maze[0]) // 2
-
-    # Explore the small maze starting from the initial position
+def getPath(maze, start_x, start_y):
+    stack = [(start_x, start_y, [], False)]
     visited = [[False for _ in range(len(maze[0]))] for _ in range(len(maze))]
-    visited[start_x][start_y] = True
-    path = dfs_explore(maze, start_x, start_y, [], visited)
 
-    if path is None:
-        print("No valid path found to the border of the small maze.")
-        return []
+    while stack:
+        current_x, current_y, path, find_exit = stack.pop()
 
-    # Send the moves to the server
-    path = ''.join(path)
-    path += "\n"
+        if maze[current_x][current_y] == EXIT:
+            print("FIND EXIT!")
+            return path, current_x, current_y, True
+
+        if maze[current_x][current_y] == '*':
+            maze[current_x][current_y] = '.'
+
+        moves = [(-1, 0), (0, -1), (1, 0), (0, 1)]
+        move_symbols = ['W', 'A', 'S', 'D']
+
+        for move, (dx, dy) in enumerate(moves):
+            new_x, new_y = current_x + dx, current_y + dy
+            if maze[new_x][new_y] == " ":
+                return path, current_x, current_y, False
+            if maze[new_x][new_y] == "E":
+                print("FIND EXIT!!!")
+                return path, current_x, current_y, True
+            if (
+                0 <= new_x < len(maze)
+                and 0 <= new_y < len(maze[0])
+                and maze[new_x][new_y] != WALL
+                and not visited[new_x][new_y]
+            ):
+                visited[new_x][new_y] = True
+                stack.append((new_x, new_y, path + [move_symbols[move]], find_exit))
+    
+    return None, current_x, current_y, find_exit
+
+def updateMaze(path, current_x, current_y, find_exit):
+    print(current_x, current_y)
+    path = "".join(path)
+    path += '\n'
+    print(path)
     client_socket.sendall(path.encode())
-    print("Sent moves to the server:", path)
-    time.sleep(0.3)
-
+    time.sleep(0.1)
+    
+    if find_exit:
+        for _ in range(5):
+            server_reply = receiveServerReply()
+            print(server_reply)
+            return
     # Receive the updated maze from the server
     server_reply = receiveServerReply()
-    maze_data = mazeParser(server_reply)
-    print("Received updated maze:")
-    printMaze(maze_data)
+    small_maze = mazeParser(server_reply)
 
-    # Update the total maze with the new information based on the path
-    current_x, current_y = small_maze_x, small_maze_y
-    for move in path:
-        if move == 'W':
-            current_x -= 1
-        elif move == 'A':
-            current_y -= 1
-        elif move == 'S':
-            current_x += 1
-        elif move == 'D':
-            current_y += 1
-
-        for i in range(len(maze_data)):
-            for j in range(len(maze_data[0])):
-                total_maze[current_x - len(maze_data) // 2 + i][current_y - len(maze_data[0]) // 2 + j] = maze_data[i][j]
-
-    return total_maze
+    # Update the maze based on the path and new small maze
+    printMaze(small_maze)
+    for i in range(len(small_maze)):
+        for j in range(len(small_maze[0])):
+            # print(current_x - len(small_maze) // 2 + i, current_y - len(small_maze[0]) // 2 + j)
+            maze[current_x - len(small_maze) // 2 + i][current_y - len(small_maze[0]) // 2 + j] = small_maze[i][j]
 
 
+server_reply = receiveServerReply()
+small_maze = mazeParser(server_reply)
+for i in range(len(small_maze)):
+        for j in range(len(small_maze[0])):
+            maze[current_x - len(small_maze) // 2 + i][current_y - len(small_maze[0]) // 2 + j] = small_maze[i][j]
 # Main loop
 while True:
-    server_reply = receiveServerReply()
-    maze_data = mazeParser(server_reply)
-    if START in [cell for row in maze_data for cell in row]:
-        total_maze = solveMazeWithDFS(maze_data)
-        print("Current state of the total maze:")
-        printMaze(total_maze)
-    else:
-        print("No start found in the maze.")
-        break
-
+    visited = [[False for _ in range(maze_size)] for _ in range(maze_size)]
+    # if EXIT in [cell for row in maze for cell in row]:
+    #     path, current_x, current_y = getPath([], current_x, current_y)
+    #     updateMaze(path, current_x, current_y)
+    #     printMaze(maze)
+    #     break
+    if find_exit: break
+    if START in [cell for row in maze for cell in row]:
+        path, current_x, current_y, find_exit = getPath(maze, current_x, current_y)
+        # print(path)
+        
+        updateMaze(path, current_x, current_y, find_exit)
+        printMaze(maze)
+        
 client_socket.close()

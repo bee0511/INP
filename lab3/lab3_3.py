@@ -106,10 +106,11 @@ def getMazeRow(client_socket, initial_data):
         if not line.startswith("   "):
             continue
         row_parts = line.split(": ")
-        row_data = row_parts[1].strip()
+        row_data = row_parts[1].lstrip()
         # print(row_data)
         if row_data == "": break
         maze[i] += row_data
+        
         i = i + 1
         if i == 7: break
     
