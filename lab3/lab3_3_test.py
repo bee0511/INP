@@ -10,7 +10,7 @@ EMPTY_SPACE = " "
 
 # Server connection setup
 server_address = "inp.zoolab.org"
-server_port = 10304
+server_port = 10303
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client_socket.connect((server_address, server_port))
 
