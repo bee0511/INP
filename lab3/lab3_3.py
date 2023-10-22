@@ -66,8 +66,8 @@ def moveToUpleftCorner(lines, v_width, v_height, client_socket):
         client_socket.sendall("jjjjjjjjjjj\n".encode())
         data = client_socket.recv(1024).decode()
     client_socket.sendall("l\n".encode())
-    data = client_socket.recv(1024).decode()
     time.sleep(0.1)
+    data = client_socket.recv(1024).decode()
     while(True):
         client_socket.sendall("jjjjjjjjjjj\n".encode())
         time.sleep(0.1)
@@ -115,7 +115,7 @@ def getMazeRow(client_socket, initial_data):
     
     for _ in range(9):
         client_socket.sendall("lllllllllll\n".encode())
-        time.sleep(0.1)
+        time.sleep(0.3)
         tmp_data = client_socket.recv(1024).decode()
         lines = tmp_data.split("\n")
         i = 0
