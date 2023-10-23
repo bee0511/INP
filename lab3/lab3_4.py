@@ -1,5 +1,4 @@
-import socket
-import time
+from pwn import *
 
 # Constants
 WALL = "#"
@@ -8,33 +7,14 @@ EXIT = "E"
 START = "*"
 EMPTY_SPACE = " "
 
-# Server connection setup
-server_address = "inp.zoolab.org"
-server_port = 10304
-client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client_socket.connect((server_address, server_port))
-
-# Initialize total_maze with the small maze in the middle
-maze_size = 201
-maze = [[' ' for _ in range(maze_size)] for _ in range(maze_size)]
-visited = [[False for _ in range(maze_size)] for _ in range(maze_size)]
-current_x = 100
-current_y = 100
-find_exit = False
-
-
-def receiveServerReply():
-    server_reply = ""
-    while True:
-        data = client_socket.recv(1024).decode()
-        server_reply += data
-        if "Enter your move(s)" in data:
-            break
+def receiveServerReply(r):
+    server_reply = r.recvuntil("Enter your move(s)>").decode()
     print(server_reply)
     return server_reply
 
 def mazeParser(maze_data):
     maze = [""] * 7
+    # print(maze_data)
     lines = maze_data.split("\n")
     i = 0
     for line in lines:
@@ -94,22 +74,20 @@ def getPath(maze, start_x, start_y):
     
     return None, current_x, current_y, find_exit
 
-def updateMaze(path, current_x, current_y, find_exit):
+def updateMaze(maze, path, current_x, current_y, find_exit, r):
     # print(current_x, current_y)
     path = "".join(path)
-    path += '\n'
     # print(path)
-    client_socket.sendall(path.encode())
-    time.sleep(0.1)
+    r.sendline(path)
+    # time.sleep(0.1)
     
     if find_exit:
         print("Found EXIT! RECEIVING")
-        for _ in range(10):
-            data = client_socket.recv(1024).decode()
-            print(data)
+        data = r.recvline_contains(b'BINGO!', keepends=True).decode()
+        print(data)
         return
     # Receive the updated maze from the server
-    server_reply = receiveServerReply()
+    server_reply = receiveServerReply(r)
     small_maze = mazeParser(server_reply)
 
     # Update the maze based on the path and new small maze
@@ -120,19 +98,37 @@ def updateMaze(path, current_x, current_y, find_exit):
             maze[current_x - len(small_maze) // 2 + i][current_y - len(small_maze[0]) // 2 + j] = small_maze[i][j]
 
 
-server_reply = receiveServerReply()
-small_maze = mazeParser(server_reply)
-for i in range(len(small_maze)):
+def main():
+    # Server connection setup
+    server_address = "inp.zoolab.org"
+    server_port = 10304
+    r = remote(server_address, server_port)
+
+    # Initialize total_maze with the small maze in the middle
+    maze_size = 201
+    maze = [[' ' for _ in range(maze_size)] for _ in range(maze_size)]
+    current_x = 100
+    current_y = 100
+    find_exit = False
+    server_reply = receiveServerReply(r)
+    small_maze = mazeParser(server_reply)
+    for i in range(len(small_maze)):
         for j in range(len(small_maze[0])):
             maze[current_x - len(small_maze) // 2 + i][current_y - len(small_maze[0]) // 2 + j] = small_maze[i][j]
-# Main loop
-while True:
-    visited = [[False for _ in range(maze_size)] for _ in range(maze_size)]
-    if find_exit: break
-    if START in [cell for row in maze for cell in row]:
-        path, current_x, current_y, find_exit = getPath(maze, current_x, current_y)
-        # print(path)
-        updateMaze(path, current_x, current_y, find_exit)
-        printMaze(maze)
-        
-client_socket.close()
+
+    
+    
+    # Main loop
+    while True:
+        # visited = [[False for _ in range(maze_size)] for _ in range(maze_size)]
+        if find_exit: break
+        if START in [cell for row in maze for cell in row]:
+            path, current_x, current_y, find_exit = getPath(maze, current_x, current_y)
+            # print(path)
+            updateMaze(maze, path, current_x, current_y, find_exit, r)
+            printMaze(maze)
+        else: print("No START!")
+
+
+if __name__ == "__main__":
+    main()
