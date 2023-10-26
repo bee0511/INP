@@ -15,6 +15,7 @@ int main() {
     const char* port = "10314";
     const char* path_otp = "/otp?name=110550164";  // Updated student ID
     const char* path_upload = "/upload";
+    const char* output_file = "verify.txt"; // The file to save the verify string
 
     // Create a socket
     int sock = socket(AF_INET, SOCK_STREAM, 0);
@@ -70,13 +71,16 @@ int main() {
         int j = i;
         while (buffer[j] != '=') {
             if (buffer[j] == '+') {
+                // verify.append("%2b");
                 verify.append("+");
                 j++;
                 continue;
             }
+            
             verify.push_back(buffer[j]);
             j++;
         }
+        // verify.append("%3d%3d");
         verify.append("==");
         break;
     }
@@ -84,52 +88,51 @@ int main() {
     memset(buffer, 0, sizeof(buffer)); // Clear the buffer
     close(sock);
 
-    // Create a socket for the POST request
-    int post_sock = socket(AF_INET, SOCK_STREAM, 0);
-    if (post_sock == -1) {
+ofstream verifyFile(output_file);
+    if (verifyFile.is_open()) {
+        verifyFile << verify;
+        verifyFile.close();
+    } else {
+        cerr << "Error opening " << output_file << " for writing" << endl;
+        return 1;
+    }
+
+
+    // Append the "verify" to the "path_upload"
+    std::string path_upload_with_verify = "/verify?otp=" + verify;
+    cout << path_upload_with_verify << endl;
+    // Create a new socket for the GET request
+    int otp_sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (otp_sock == -1) {
         perror("Socket creation failed");
         return 1;
     }
 
     // Connect to the server again
-    if (connect(post_sock, (struct sockaddr*)&server_address, sizeof(server_address)) == -1) {
+    if (connect(otp_sock, (struct sockaddr*)&server_address, sizeof(server_address)) == -1) {
         perror("Connection failed");
-        close(post_sock);
+        close(otp_sock);
         return 1;
     }
 
-const char* boundary = "WebKitFormBoundary7TMYhSONfkAM2z3a";
+    // Construct and send the GET request to verify OTP
+    std::string request_verify = "GET " + path_upload_with_verify + " HTTP/1.1\r\n" +
+                              "Host: " + std::string(server) + "\r\n" +
+                              "Connection: close\r\n" +
+                              "\r\n";
 
-// Construct and send the POST request with the "verify" string
-stringstream post_request;
-post_request << "POST " << path_upload << " HTTP/1.1\r\n"
-             << "Host: " << server << "\r\n\r\n"
-             << "Content-Type: multipart/form-data; boundary=" << boundary << "\r\n\r\n"
-             << "--" << boundary << "\r\n"
-             << "Content-Disposition: form-data; name=\"file\"; filename=\"test.txt\"\r\n"
-             << "Content-Type: text/plain\r\n\r\n"
-             << verify << "\r\n"
-             << "--" << boundary << "--\r\n";
-
-
-    string request_upload = post_request.str();
-    if (send(post_sock, request_upload.c_str(), request_upload.size(), 0) == -1) {
-        perror("Error sending upload request");
-        close(post_sock);
+    if (send(otp_sock, request_verify.c_str(), request_verify.size(), 0) == -1) {
+        perror("Error sending verify request");
+        close(otp_sock);
         return 1;
     }
 
-    // Receive and print the response
-    while ((bytes_received = recv(post_sock, buffer, sizeof(buffer) - 1, 0)) > 0) {
-        buffer[bytes_received] = '\0'; // Null-terminate the received data
-        std::cout << buffer;
+    while ((bytes_received = recv(otp_sock, buffer, sizeof(buffer), 0)) > 0) {
+        std::cout.write(buffer, bytes_received);
     }
-
-    if (bytes_received == -1) {
-        perror("Error receiving upload response");
-    }
-
-    close(post_sock);
+    
+    memset(buffer, 0, sizeof(buffer)); // Clear the buffer
+    close(otp_sock);
 
     return 0;
 }
