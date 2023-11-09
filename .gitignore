@@ -3,7 +3,7 @@ docker-compose.yml
 Dockerfile
 .venv
 *.bin
-demo
+lab?/demo
 *.zip
 test.py
 __pycache__
@@ -12,3 +12,7 @@ helloworld
 lab4/lab4
 otp1.txt
 internal
+*.tbz
+Makefile
+homework1/demo/server
+homework1/demo/server.o
