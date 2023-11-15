@@ -226,6 +226,22 @@ void handle_request(int client_socket) {
         }
     }
 
+    // If the requested path is the root ("/") without a trailing slash, check for "index.html"
+    if (strcmp(decoded_path, "/") == 0) {
+        char temp_full_path[4096];  // Temporary buffer for snprintf result
+
+        // Use snprintf to ensure null-termination
+        int snprintf_result = snprintf(temp_full_path, sizeof(temp_full_path), "%s/index.html", full_path);
+
+        // Check if "index.html" exists
+        if (snprintf_result > 0 && snprintf_result < sizeof(temp_full_path) &&
+            access(temp_full_path, F_OK) == 0) {
+            // "index.html" found, update full_path
+            strncpy(full_path, temp_full_path, sizeof(full_path) - 1);
+            full_path[sizeof(full_path) - 1] = '\0';
+        }
+    }
+
     // Open the file for reading
     int file_fd = open(full_path, O_RDONLY);
     if (file_fd < 0) {
