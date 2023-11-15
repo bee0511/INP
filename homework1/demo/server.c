@@ -1,5 +1,7 @@
+#include <ctype.h>
 #include <fcntl.h>
 #include <iconv.h>
+#include <langinfo.h>
 #include <libgen.h>
 #include <locale.h>
 #include <netinet/in.h>
@@ -8,6 +10,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
+#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -18,60 +22,93 @@
         exit(-1);  \
     }
 
-void *handle_connection(void *arg);
 void handle_request(int client_socket);
-int url_decode(const char *encoded, char *decoded, size_t decoded_size);
+
+// URL-decode function
+int url_decode(const char *encoded, char *decoded, size_t decoded_size) {
+    size_t i, j;
+    for (i = 0, j = 0; i < strlen(encoded) && j < decoded_size - 1; ++i, ++j) {
+        if (encoded[i] == '%' && i + 2 < strlen(encoded)) {
+            int value;
+            if (sscanf(encoded + i + 1, "%02x", &value) == 1) {
+                decoded[j] = (char)value;
+                i += 2;
+            } else {
+                return -1;  // Invalid percent encoding
+            }
+        } else if (encoded[i] == '+') {
+            decoded[j] = ' ';
+        } else {
+            decoded[j] = encoded[i];
+        }
+    }
+    decoded[j] = '\0';
+    return 0;
+}
 
 int main(int argc, char *argv[]) {
-    int s;
-    struct sockaddr_in sin;
+    int server_socket, client_socket;
+    struct sockaddr_in sin, csin;
+    socklen_t csinlen = sizeof(csin);
 
-    if ((s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+    if ((server_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
         errquit("socket");
 
     do {
         int v = 1;
-        setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(v));
+        setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(v));
     } while (0);
 
     bzero(&sin, sizeof(sin));
     sin.sin_family = AF_INET;
     sin.sin_port = htons(80);
 
-    if (bind(s, (struct sockaddr *)&sin, sizeof(sin)) < 0)
+    if (bind(server_socket, (struct sockaddr *)&sin, sizeof(sin)) < 0)
         errquit("bind");
 
-    if (listen(s, SOMAXCONN) < 0)
+    if (listen(server_socket, SOMAXCONN) < 0)
         errquit("listen");
 
+    int max_fd = server_socket;
+    fd_set active_fds, read_fds;
+    FD_ZERO(&active_fds);
+    FD_SET(server_socket, &active_fds);
+
     while (1) {
-        int c;
-        struct sockaddr_in csin;
-        socklen_t csinlen = sizeof(csin);
+        read_fds = active_fds;
 
-        if ((c = accept(s, (struct sockaddr *)&csin, &csinlen)) < 0) {
-            perror("accept");
-            continue;
+        if (select(max_fd + 1, &read_fds, NULL, NULL, NULL) < 0)
+            errquit("select");
+
+        for (int i = 0; i <= max_fd; ++i) {
+            if (FD_ISSET(i, &read_fds)) {
+                if (i == server_socket) {
+                    // New connection
+                    if ((client_socket = accept(server_socket, (struct sockaddr *)&csin, &csinlen)) < 0) {
+                        perror("accept");
+                        continue;
+                    }
+
+                    FD_SET(client_socket, &active_fds);
+                    max_fd = (client_socket > max_fd) ? client_socket : max_fd;
+                } else {
+                    // Data to read on existing connection
+                    handle_request(i);
+
+                    // Shutdown the socket for further sends and receives
+                    shutdown(i, SHUT_RDWR);
+
+                    // Close the file descriptor
+                    close(i);
+
+                    // Remove the socket from the active set
+                    FD_CLR(i, &active_fds);
+                }
+            }
         }
-
-        // Create a new thread for each connection
-        pthread_t tid;
-        if (pthread_create(&tid, NULL, handle_connection, (void *)(intptr_t)c) != 0) {
-            perror("pthread_create");
-            close(c);
-        }
-
-        // Detach the thread to avoid memory leaks
-        pthread_detach(tid);
     }
 
     return 0;
-}
-
-void *handle_connection(void *arg) {
-    int client_socket = (intptr_t)arg;
-    handle_request(client_socket);
-    pthread_exit(NULL);
 }
 
 void handle_request(int client_socket) {
@@ -95,57 +132,128 @@ void handle_request(int client_socket) {
         return;
     }
 
-    // Print debug information
-    printf("Received request: %s", buf);
-
     // Parse the request line
     sscanf(buf, "%s %s", method, path);
 
     // Ignore additional request parameters (query string)
     strtok(path, "?");
 
-    // Convert URL-encoded characters to UTF-8
+    // URL-decode the path
     char decoded_path[255];
     if (url_decode(path, decoded_path, sizeof(decoded_path)) != 0) {
         // URL decoding failed
         fprintf(fp, "HTTP/1.0 400 Bad Request\r\n\r\n");
-        fclose(fp);
-        close(client_socket);
+        fprintf(fp, "Connection: close\r\n");  // Indicate that the connection will be closed
+        fprintf(fp, "\r\n");                   // End of headers
+        fflush(fp);                            // Flush the FILE* to ensure the response is sent
+        fclose(fp);                            // Close the FILE*
+        close(client_socket);                  // Close the socket
         return;
     }
 
-    // Construct the full file path by appending "/html" to the requested path
+    // Construct the full file path by appending "/html" to the decoded path
     char full_path[4096];
     snprintf(full_path, sizeof(full_path), "html%s", decoded_path);
+
+    // Debug print to check the decoded full_path
+    printf("full_path: %s\n", full_path);
 
     // Handle only GET requests
     if (strcmp(method, "GET") != 0) {
         // Unsupported HTTP method
         fprintf(fp, "HTTP/1.0 501 Not Implemented\r\n\r\n");
+        fprintf(fp, "Connection: close\r\n");  // Indicate that the connection will be closed
+        fprintf(fp, "\r\n");                   // End of headers
+        fflush(fp);                            // Flush the FILE* to ensure the response is sent
+
+        // Shutdown the socket for further sends and receives
+        shutdown(client_socket, SHUT_RDWR);
+
+        // Close the FILE* and the socket
         fclose(fp);
         close(client_socket);
         return;
     }
-
     // If the requested path is a directory without a trailing slash, redirect
     struct stat stat_buf;
     if (stat(full_path, &stat_buf) == 0 && S_ISDIR(stat_buf.st_mode) && path[strlen(path) - 1] != '/') {
+        // Redirect to the directory with a trailing slash
         fprintf(fp, "HTTP/1.0 301 Moved Permanently\r\nLocation: %s/\r\n\r\n", path);
+        fprintf(fp, "Connection: close\r\n");  // Indicate that the connection will be closed
+        fprintf(fp, "\r\n");                   // End of headers
+        fflush(fp);                            // Flush the FILE* to ensure the response is sent
+
+        // Shutdown the socket for further sends and receives
+        shutdown(client_socket, SHUT_RDWR);
+
+        // Close the FILE* and the socket
         fclose(fp);
         close(client_socket);
         return;
     }
 
-    // If the requested path is a directory, append the default index.html
-    if (S_ISDIR(stat_buf.st_mode)) {
-        strncat(full_path, "/index.html", sizeof(full_path) - strlen(full_path) - 1);
+    // If the requested path is a directory and there is no index.html file, return 403 Forbidden
+    if (stat(full_path, &stat_buf) == 0 && S_ISDIR(stat_buf.st_mode) && path[strlen(path) - 1] == '/') {
+        // Check if there is an index.html file in the directory
+        char index_path[4096 + sizeof("/index.html")];
+        snprintf(index_path, sizeof(index_path), "%s/index.html", full_path);
+        if (access(index_path, F_OK) != 0) {
+            // No index.html file, return 403 Forbidden
+            fprintf(fp, "HTTP/1.0 403 Forbidden\r\n");
+            fprintf(fp, "Content-Type: text/html\r\n");
+            fprintf(fp, "Connection: close\r\n");
+            fprintf(fp, "\r\n");  // End of headers
+
+            // Custom HTML message for 403 Forbidden
+            fprintf(fp, "<html>\n");
+            fprintf(fp, " <head>\n");
+            fprintf(fp, "  <title>403 Forbidden</title>\n");
+            fprintf(fp, " </head>\n");
+            fprintf(fp, " <body>\n");
+            fprintf(fp, "  <h1>403 Forbidden</h1>\n");
+            fprintf(fp, " </body>\n");
+            fprintf(fp, "</html>\n");
+
+            fflush(fp);  // Flush the FILE* to ensure the response is sent
+
+            // Shutdown the socket for further sends and receives
+            shutdown(client_socket, SHUT_RDWR);
+
+            // Close the FILE* and the socket
+            fclose(fp);
+            close(client_socket);
+            return;
+        }
     }
 
     // Open the file for reading
     int file_fd = open(full_path, O_RDONLY);
     if (file_fd < 0) {
         // File not found
-        fprintf(fp, "HTTP/1.0 404 Not Found\r\n\r\n");
+        fprintf(fp, "HTTP/1.0 404 Not Found\r\n");
+        fprintf(fp, "Content-Type: text/html\r\n");
+        fprintf(fp, "Connection: close\r\n");
+        fprintf(fp, "\r\n");  // End of headers
+
+        // Custom XML message for 404 Not Found
+        fprintf(fp, "<?xml version=\"1.0\" encoding=\"iso-8859-1\"?>\n");
+        fprintf(fp, "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\"\n");
+        fprintf(fp, "         \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">\n");
+        fprintf(fp, "<html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"en\" lang=\"en\">\n");
+        fprintf(fp, " <head>\n");
+        fprintf(fp, "  <title>404 Not Found</title>\n");
+        fprintf(fp, " </head>\n");
+        fprintf(fp, " <body>\n");
+        fprintf(fp, "  <h1>404 Not Found</h1>\n");
+        fprintf(fp, " </body>\n");
+        fprintf(fp, "</html>\n");
+
+        fflush(fp);  // Flush the FILE* to ensure the response is sent
+
+        // Shutdown the socket for further sends and receives
+        shutdown(client_socket, SHUT_RDWR);
+
+        // Close the FILE* and the socket
         fclose(fp);
         close(client_socket);
         return;
@@ -178,70 +286,14 @@ void handle_request(int client_socket) {
         fwrite(buf, 1, bytes_read, fp);
     }
 
-    // Close file and socket
-    close(file_fd);
+    // Flush the FILE* to ensure all data is written
+    fflush(fp);
+
+    // Shutdown the socket for further sends and receives
+    shutdown(client_socket, SHUT_RDWR);
+
+    // Close the FILE* and the file descriptor
     fclose(fp);
+    close(file_fd);
     close(client_socket);
-}
-
-// Function to URL-decode a string
-int url_decode(const char *encoded, char *decoded, size_t decoded_size) {
-    size_t i = 0, j = 0;
-
-    iconv_t cd = iconv_open("UTF-8", "UTF-8");
-
-    if (cd == (iconv_t)-1) {
-        // Failed to initialize iconv
-        return -1;
-    }
-
-    while (i < strlen(encoded) && j < decoded_size - 1) {
-        if (encoded[i] == '%' && i + 2 < strlen(encoded)) {
-            // Decode URL-encoded character
-            char hex[3] = {encoded[i + 1], encoded[i + 2], '\0'};
-            unsigned int value;
-            sscanf(hex, "%x", &value);
-
-            char utf8[4];
-            utf8[0] = value & 0xFF;
-            utf8[1] = (value >> 8) & 0xFF;
-            utf8[2] = (value >> 16) & 0xFF;
-            utf8[3] = '\0';
-
-            char *inbuf = utf8;
-            size_t inbytesleft = 3;
-            size_t outbytesleft = 4;
-
-            // Use a temporary variable for the output buffer
-            char temp[4];
-            char *outbuf = temp;
-
-            if (iconv(cd, &inbuf, &inbytesleft, &outbuf, &outbytesleft) == (size_t)-1) {
-                iconv_close(cd);
-                // Failed to convert character
-                return -1;
-            }
-
-            // Copy the converted character to the final buffer
-            for (size_t k = 0; k < 4 - outbytesleft; ++k) {
-                decoded[j++] = temp[k];
-            }
-
-            i += 3;
-        } else if (encoded[i] == '+') {
-            // Replace '+' with space
-            decoded[j++] = ' ';
-            i++;
-        } else {
-            // Copy the character as is
-            decoded[j++] = encoded[i++];
-        }
-    }
-
-    // Null-terminate the decoded string
-    decoded[j] = '\0';
-
-    iconv_close(cd);
-
-    return 0;
 }
