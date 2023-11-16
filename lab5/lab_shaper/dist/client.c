@@ -8,24 +8,25 @@
 #define SERVER_IP "127.0.0.1"
 #define PORT 12345
 #define BUFFER_SIZE 1024 * 1024
+#define NUM_ITERATIONS 1000
 
 double measureLatency(int client_socket) {
+    // printf("[Client] Start measureLatency\n");
+
     // Measure one-way latency
     struct timeval start, end;
     char message[] = "A";
 
     gettimeofday(&start, NULL);
-    ssize_t bytes_sent = send(client_socket, message, strlen(message), 0);
-    if (bytes_sent == -1) {
-        perror("Error sending data");
+    if (send(client_socket, message, strlen(message), 0) == -1) {
+        perror("[Client] Error sending data");
         exit(EXIT_FAILURE);
     }
 
     // Receive acknowledgment from the server
     char ack[BUFFER_SIZE];
-    ssize_t bytes_received = recv(client_socket, ack, sizeof(ack), 0);
-    if (bytes_received == -1) {
-        perror("Error receiving acknowledgment");
+    if (recv(client_socket, ack, sizeof(ack), 0) == -1) {
+        perror("[Client] Error receiving acknowledgment");
         exit(EXIT_FAILURE);
     }
 
@@ -36,31 +37,46 @@ double measureLatency(int client_socket) {
 }
 
 double measureThroughput(int client_socket) {
-    // Measure throughput
-    char data[BUFFER_SIZE];
-    memset(data, 'A', sizeof(data));
-
     struct timeval start, end;
 
-    // Send data to the server
     gettimeofday(&start, NULL);
-    ssize_t bytes_sent = send(client_socket, data, sizeof(data), 0);
-    if (bytes_sent == -1) {
-        perror("Error sending data");
-        exit(EXIT_FAILURE);
-    }
 
-    // Receive acknowledgment from the server
-    char ack[BUFFER_SIZE];
-    ssize_t bytes_received = recv(client_socket, ack, sizeof(ack), 0);
-    if (bytes_received == -1) {
-        perror("Error receiving acknowledgment");
-        exit(EXIT_FAILURE);
+    for (int i = 0; i < NUM_ITERATIONS; ++i) {
+        // printf("%d th iteration.\n", i);
+        char send_buffer[BUFFER_SIZE];
+        memset(send_buffer, 'A', sizeof(send_buffer));
+
+        // Send data to the server
+        ssize_t bytes_sent = send(client_socket, send_buffer, sizeof(send_buffer), 0);
+        if (bytes_sent <= 0) {
+            perror("Error sending data");
+            exit(EXIT_FAILURE);
+        }
+
+        // Receive acknowledgment from the server
+        char recv_buffer[BUFFER_SIZE];
+        ssize_t total_bytes_received = 0;
+
+        while (total_bytes_received < BUFFER_SIZE) {
+            ssize_t bytes_received = recv(client_socket, recv_buffer + total_bytes_received, BUFFER_SIZE - total_bytes_received, 0);
+
+            if (bytes_received == -1) {
+                perror("Error receiving data");
+                exit(EXIT_FAILURE);
+            } else if (bytes_received == 0) {
+                // Connection closed by server
+                printf("Connection closed by server\n");
+                break;
+            }
+
+            total_bytes_received += bytes_received;
+        }
     }
 
     gettimeofday(&end, NULL);
-    long elapsed_time = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
-    double throughput = (BUFFER_SIZE * 8.0) / (elapsed_time);
+
+    double elapsed_time = (end.tv_sec - start.tv_sec) * 1e6 + (end.tv_usec - start.tv_usec);
+    double throughput = (BUFFER_SIZE * 8.0 * NUM_ITERATIONS) / (elapsed_time);
 
     return throughput;
 }

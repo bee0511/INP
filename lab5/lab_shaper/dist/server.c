@@ -17,11 +17,37 @@ void handleLatency(int client_socket) {
     send(client_socket, buffer, strlen(buffer), 0);
 }
 
-void handleThroughput(int client_socket) {
+void handleThroughput(int client_socket, int num_iterations) {
     long long data_size = 1024 * 1024;  // 1 MB
     char buffer[data_size];
-    recv(client_socket, buffer, sizeof(buffer), 0);
-    send(client_socket, buffer, sizeof(buffer), 0);
+
+    for (int i = 0; i < num_iterations; ++i) {
+        // printf("%d th iteration.\n", i);
+
+        ssize_t total_bytes_received = 0;
+
+        while (total_bytes_received < data_size) {
+            ssize_t bytes_received = recv(client_socket, buffer + total_bytes_received, data_size - total_bytes_received, 0);
+
+            if (bytes_received == -1) {
+                perror("Error receiving data");
+                exit(EXIT_FAILURE);
+            } else if (bytes_received == 0) {
+                // Connection closed by client
+                printf("Connection closed by client\n");
+                break;
+            }
+
+            total_bytes_received += bytes_received;
+        }
+
+        ssize_t bytes_sent = send(client_socket, buffer, total_bytes_received, 0);
+
+        if (bytes_sent == -1) {
+            perror("Error sending acknowledgment");
+            exit(EXIT_FAILURE);
+        }
+    }
 }
 
 int main() {
@@ -60,8 +86,6 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    // printf("Server listening on port %d...\n", PORT);
-
     // Initialize client sockets array
     for (int i = 0; i < MAX_CLIENTS; i++) {
         client_sockets[i] = -1;
@@ -87,8 +111,6 @@ int main() {
                 exit(EXIT_FAILURE);
             }
 
-            // printf("Client connected\n");
-
             FD_SET(client_sockets[0], &master_fds);
 
             if (client_sockets[0] > max_fd) {
@@ -103,8 +125,8 @@ int main() {
                 handleLatency(client_sockets[i]);
 
                 // Handle throughput
-                handleThroughput(client_sockets[i]);
-
+                handleThroughput(client_sockets[i], 1000);
+                // printf("[*] Closing socket...\n");
                 close(client_sockets[i]);
                 FD_CLR(client_sockets[i], &master_fds);
                 client_sockets[i] = -1;
