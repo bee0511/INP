@@ -1,4 +1,5 @@
 #include <ctype.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <iconv.h>
 #include <langinfo.h>
@@ -44,6 +45,53 @@ int url_decode(const char *encoded, char *decoded, size_t decoded_size) {
     }
     decoded[j] = '\0';
     return 0;
+}
+
+// Function to set a socket to non-blocking mode
+int set_non_blocking(int socket_fd) {
+    int flags = fcntl(socket_fd, F_GETFL, 0);
+    if (flags == -1) {
+        perror("fcntl");
+        return -1;
+    }
+
+    if (fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
+        perror("fcntl");
+        return -1;
+    }
+
+    return 0;
+}
+
+// Function to send data using non-blocking sockets
+ssize_t send_non_blocking(int socket_fd, const void *buffer, size_t length) {
+    ssize_t total_sent = 0;
+
+    while (total_sent < length) {
+        ssize_t result = send(socket_fd, buffer + total_sent, length - total_sent, MSG_DONTWAIT);
+
+        if (result == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // The operation would block, try again later
+                continue;
+            } else {
+                // Log the error and continue sending
+                perror("send");
+                fprintf(stderr, "Error sending data to client: %s\n", strerror(errno));
+
+                // You might choose to break the loop or return an error code based on your requirements
+                // break;
+                // return -1;
+            }
+        } else if (result == 0) {
+            // Connection closed by the other end
+            break;
+        }
+
+        total_sent += result;
+    }
+
+    return total_sent;
 }
 
 int main(int argc, char *argv[]) {
@@ -113,7 +161,7 @@ int main(int argc, char *argv[]) {
 
 void handle_request(int client_socket) {
     setlocale(LC_ALL, "en_US.UTF-8");
-    char buf[4096];
+    char buf[8192];
     FILE *fp;
     char method[10], path[255];
 
@@ -294,12 +342,36 @@ void handle_request(int client_socket) {
     fprintf(fp, "Content-Type: %s; charset=utf-8\r\n", mime_type);
     fprintf(fp, "\r\n");
 
+    // Set the client socket to non-blocking mode
+    if (set_non_blocking(client_socket) == -1) {
+        // Handle error
+        perror("set_non_blocking");
+        fclose(fp);
+        close(file_fd);
+        close(client_socket);
+        return;
+    }
+
     // Send the file content
     while (1) {
         ssize_t bytes_read = read(file_fd, buf, sizeof(buf));
-        if (bytes_read <= 0)
+        if (bytes_read <= 0) {
+            // End of file or error
             break;
-        fwrite(buf, 1, bytes_read, fp);
+        }
+
+        ssize_t bytes_sent = send_non_blocking(client_socket, buf, bytes_read);
+
+        if (bytes_sent < 0) {
+            // Handle send error
+            perror("send_non_blocking");
+
+            // Log the error
+            fprintf(stderr, "Error sending data to client: %s\n", strerror(errno));
+
+            // You might choose to continue or break the loop based on your requirements
+            break;
+        }
     }
 
     // Flush the FILE* to ensure all data is written
@@ -311,5 +383,7 @@ void handle_request(int client_socket) {
     // Close the FILE* and the file descriptor
     fclose(fp);
     close(file_fd);
+
+    // Close the socket after ensuring all data is sent
     close(client_socket);
 }
