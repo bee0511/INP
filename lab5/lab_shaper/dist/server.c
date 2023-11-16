@@ -18,7 +18,7 @@ void handleLatency(int client_socket) {
 }
 
 void handleThroughput(int client_socket) {
-    int data_size = 1024 * 1024;  // 1 MB
+    long long data_size = 1024 * 1024;  // 1 MB
     char buffer[data_size];
     recv(client_socket, buffer, sizeof(buffer), 0);
     send(client_socket, buffer, sizeof(buffer), 0);
@@ -32,6 +32,13 @@ int main() {
     // Create socket
     if ((server_socket = socket(AF_INET, SOCK_STREAM, 0)) == -1) {
         perror("Error creating socket");
+        exit(EXIT_FAILURE);
+    }
+
+    // Enable address reuse option
+    int enable = 1;
+    if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(int)) < 0) {
+        perror("setsockopt(SO_REUSEADDR) failed");
         exit(EXIT_FAILURE);
     }
 
@@ -53,7 +60,7 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    printf("Server listening on port %d...\n", PORT);
+    // printf("Server listening on port %d...\n", PORT);
 
     // Initialize client sockets array
     for (int i = 0; i < MAX_CLIENTS; i++) {

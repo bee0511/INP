@@ -1,45 +1,66 @@
+#include <arpa/inet.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <unistd.h>
 #include <string.h>
-#include <arpa/inet.h>
 #include <sys/time.h>
+#include <unistd.h>
 
 #define SERVER_IP "127.0.0.1"
 #define PORT 12345
-#define BUFFER_SIZE 1024
+#define BUFFER_SIZE 1024 * 1024
 
-long measureLatency(int client_socket) {
-    // Measure latency
+double measureLatency(int client_socket) {
+    // Measure one-way latency
     struct timeval start, end;
+    char message[] = "A";
+
     gettimeofday(&start, NULL);
+    ssize_t bytes_sent = send(client_socket, message, strlen(message), 0);
+    if (bytes_sent == -1) {
+        perror("Error sending data");
+        exit(EXIT_FAILURE);
+    }
 
-    char message[] = "Hello, server!";
-    send(client_socket, message, strlen(message), 0);
-
-    char response[BUFFER_SIZE];
-    recv(client_socket, response, sizeof(response), 0);
+    // Receive acknowledgment from the server
+    char ack[BUFFER_SIZE];
+    ssize_t bytes_received = recv(client_socket, ack, sizeof(ack), 0);
+    if (bytes_received == -1) {
+        perror("Error receiving acknowledgment");
+        exit(EXIT_FAILURE);
+    }
 
     gettimeofday(&end, NULL);
-    long latency = (end.tv_sec - start.tv_sec) * 1000 + (end.tv_usec - start.tv_usec) / 1000;
-	
-	return latency;
+    double latency = (end.tv_sec - start.tv_sec) * 1000 + (end.tv_usec - start.tv_usec) / 1000;
+
+    return latency / 2;
 }
 
 double measureThroughput(int client_socket) {
     // Measure throughput
-    int data_size = 1024 * 1024;  // 1 MB
-    char data[data_size];
+    char data[BUFFER_SIZE];
     memset(data, 'A', sizeof(data));
 
     struct timeval start, end;
-    gettimeofday(&start, NULL);
 
-    send(client_socket, data, sizeof(data), 0);
+    // Send data to the server
+    gettimeofday(&start, NULL);
+    ssize_t bytes_sent = send(client_socket, data, sizeof(data), 0);
+    if (bytes_sent == -1) {
+        perror("Error sending data");
+        exit(EXIT_FAILURE);
+    }
+
+    // Receive acknowledgment from the server
+    char ack[BUFFER_SIZE];
+    ssize_t bytes_received = recv(client_socket, ack, sizeof(ack), 0);
+    if (bytes_received == -1) {
+        perror("Error receiving acknowledgment");
+        exit(EXIT_FAILURE);
+    }
 
     gettimeofday(&end, NULL);
     long elapsed_time = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
-    double throughput = (data_size * 8.0) / (elapsed_time);
+    double throughput = (BUFFER_SIZE * 8.0) / (elapsed_time);
 
     return throughput;
 }
@@ -66,13 +87,13 @@ int main() {
         exit(EXIT_FAILURE);
     }
 
-    // Measure latency
-    long latency = measureLatency(client_socket);
+    // Measure one-way latency
+    double latency = measureLatency(client_socket);
 
     // Measure throughput
-    double throughtput = measureThroughput(client_socket);
+    double throughput = measureThroughput(client_socket);
 
-	printf("# RESULTS: delay = %ld ms, bandwidth = %.2f Mbps\n", latency, throughtput);
+    printf("# RESULTS: delay = %.3f ms, bandwidth = %.3f Mbps\n", latency, throughput);
     // Close socket
     close(client_socket);
 
