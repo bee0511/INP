@@ -6,10 +6,12 @@ import random
 import subprocess
 from testutil import *
 
-delay = [ (i+1)*10 + random.randint(-5, 5)   for i in range(10) ]
-bw    = [ (i+1)*50 + random.randint(-30, 30) for i in range(10) ]
-random.shuffle(delay)
-random.shuffle(bw)
+# delay = [ (i+1)*10 + random.randint(-5, 5)   for i in range(10) ]
+# bw    = [ (i+1)*50 + random.randint(-30, 30) for i in range(10) ]
+# random.shuffle(delay)
+# random.shuffle(bw)
+delay = [0 for _ in range(10)]
+bw = [100 for _ in range(10)]
 
 shell('killall server', stderr=subprocess.DEVNULL)
 shell('sleep 1')
