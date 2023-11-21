@@ -16,8 +16,8 @@
 #define BUFFER_SIZE 1024 * 1024 * 2  // 2MB
 #define NUM_MEASURE 100
 #define NUM_SKIPS 10
-#define NUM_SKIP_BEGIN 25
-#define NUM_SKIP_END 10
+#define NUM_SKIP_BEGIN 40
+#define NUM_SKIP_END 25
 
 float total_bytes = 0;
 int skips = NUM_SKIPS;
