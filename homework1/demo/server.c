@@ -1,3 +1,4 @@
+#include <arpa/inet.h>
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -12,10 +13,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
+#include <sys/epoll.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
+
+#define MAX_EVENTS 10
 
 #define errquit(m) \
     {              \
@@ -24,6 +28,43 @@
     }
 
 void handle_request(int client_socket);
+
+void set_non_blocking(int fd) {
+    int flags = fcntl(fd, F_GETFL, 0);
+    if (flags == -1)
+        errquit("fcntl");
+
+    flags |= O_NONBLOCK;
+
+    if (fcntl(fd, F_SETFL, flags) == -1)
+        errquit("fcntl");
+}
+
+ssize_t send_non_blocking(int socket_fd, const void *buffer, size_t length) {
+    ssize_t total_sent = 0;
+
+    while (total_sent < length) {
+        ssize_t result = send(socket_fd, buffer + total_sent, length - total_sent, MSG_DONTWAIT);
+
+        if (result == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // The operation would block, try again later
+                continue;
+            } else {
+                // Log the error and continue sending
+                perror("send_non_blocking");
+                return -1;  // or handle the error in a way that makes sense for your application
+            }
+        } else if (result == 0) {
+            // Connection closed by the other end
+            break;
+        }
+
+        total_sent += result;
+    }
+
+    return total_sent;
+}
 
 // URL-decode function
 int url_decode(const char *encoded, char *decoded, size_t decoded_size) {
@@ -45,53 +86,6 @@ int url_decode(const char *encoded, char *decoded, size_t decoded_size) {
     }
     decoded[j] = '\0';
     return 0;
-}
-
-// Function to set a socket to non-blocking mode
-int set_non_blocking(int socket_fd) {
-    int flags = fcntl(socket_fd, F_GETFL, 0);
-    if (flags == -1) {
-        perror("fcntl");
-        return -1;
-    }
-
-    if (fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK) == -1) {
-        perror("fcntl");
-        return -1;
-    }
-
-    return 0;
-}
-
-// Function to send data using non-blocking sockets
-ssize_t send_non_blocking(int socket_fd, const void *buffer, size_t length) {
-    ssize_t total_sent = 0;
-
-    while (total_sent < length) {
-        ssize_t result = send(socket_fd, buffer + total_sent, length - total_sent, MSG_DONTWAIT);
-
-        if (result == -1) {
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // The operation would block, try again later
-                continue;
-            } else {
-                // Log the error and continue sending
-                perror("send");
-                fprintf(stderr, "Error sending data to client: %s\n", strerror(errno));
-
-                // You might choose to break the loop or return an error code based on your requirements
-                // break;
-                // return -1;
-            }
-        } else if (result == 0) {
-            // Connection closed by the other end
-            break;
-        }
-
-        total_sent += result;
-    }
-
-    return total_sent;
 }
 
 int main(int argc, char *argv[]) {
@@ -117,51 +111,79 @@ int main(int argc, char *argv[]) {
     if (listen(server_socket, SOMAXCONN) < 0)
         errquit("listen");
 
-    int max_fd = server_socket;
-    fd_set active_fds, read_fds;
-    FD_ZERO(&active_fds);
-    FD_SET(server_socket, &active_fds);
+    set_non_blocking(server_socket);
 
+    // Create epoll instance
+    int epoll_fd = epoll_create1(0);
+    if (epoll_fd == -1)
+        errquit("epoll_create1");
+
+    struct epoll_event event;
+    event.events = EPOLLIN | EPOLLET;  // EPOLLET for edge-triggered mode
+    event.data.fd = server_socket;
+
+    // Add server_socket to epoll
+    if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_socket, &event) == -1)
+        errquit("epoll_ctl");
+
+    struct epoll_event events[MAX_EVENTS];
     while (1) {
-        read_fds = active_fds;
+        int num_events = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
+        if (num_events == -1)
+            errquit("epoll_wait");
 
-        if (select(max_fd + 1, &read_fds, NULL, NULL, NULL) < 0)
-            errquit("select");
+        for (int i = 0; i < num_events; ++i) {
+            if (events[i].data.fd == server_socket) {
+                // New connection
+                if ((client_socket = accept(server_socket, (struct sockaddr *)&csin, &csinlen)) < 0) {
+                    perror("accept");
+                    continue;
+                }
 
-        for (int i = 0; i <= max_fd; ++i) {
-            if (FD_ISSET(i, &read_fds)) {
-                if (i == server_socket) {
-                    // New connection
-                    if ((client_socket = accept(server_socket, (struct sockaddr *)&csin, &csinlen)) < 0) {
-                        perror("accept");
-                        continue;
+                // Set client socket to non-blocking
+                set_non_blocking(client_socket);
+
+                // Add client_socket to epoll
+                event.events = EPOLLIN | EPOLLET | EPOLLRDHUP | EPOLLHUP;  // EPOLLET for edge-triggered mode
+                event.data.fd = client_socket;
+                if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socket, &event) == -1)
+                    errquit("epoll_ctl");
+
+            } else if (events[i].events & EPOLLIN) {  // Data to read on existing connection
+                // handle_request should be modified to handle non-blocking reads
+                handle_request(events[i].data.fd);
+
+                /* check if the connection is closing */
+                if (events[i].events & (EPOLLRDHUP | EPOLLHUP)) {
+                    // Shutdown the socket for further sends and receives
+                    if (shutdown(events[i].data.fd, SHUT_RDWR) == -1 && errno != ENOTCONN) {
+                        perror("shutdown");
+                    }
+                    // Close the file descriptor
+                    if (close(events[i].data.fd) == -1 && errno != EBADF) {
+                        perror("close");
+                    }
+                    // Remove the socket from epoll
+                    if (epoll_ctl(epoll_fd, EPOLL_CTL_DEL, events[i].data.fd, NULL) == -1 && errno != ENOENT) {
+                        perror("epoll_ctl");
                     }
 
-                    FD_SET(client_socket, &active_fds);
-                    max_fd = (client_socket > max_fd) ? client_socket : max_fd;
-                } else {
-                    // Data to read on existing connection
-                    handle_request(i);
-
-                    // Shutdown the socket for further sends and receives
-                    shutdown(i, SHUT_RDWR);
-
-                    // Close the file descriptor
-                    close(i);
-
-                    // Remove the socket from the active set
-                    FD_CLR(i, &active_fds);
+                    printf("[+] connection closed\n");
                 }
+            } else {
+                printf("[+] unexpected\n");
             }
         }
     }
+
+    close(server_socket);
 
     return 0;
 }
 
 void handle_request(int client_socket) {
     setlocale(LC_ALL, "en_US.UTF-8");
-    char buf[8192];
+    char buf[4096];
     FILE *fp;
     char method[10], path[255];
 
@@ -195,7 +217,6 @@ void handle_request(int client_socket) {
         fprintf(fp, "\r\n");                   // End of headers
         fflush(fp);                            // Flush the FILE* to ensure the response is sent
         fclose(fp);                            // Close the FILE*
-        close(client_socket);                  // Close the socket
         return;
     }
 
@@ -204,7 +225,7 @@ void handle_request(int client_socket) {
     snprintf(full_path, sizeof(full_path), "html%s", decoded_path);
 
     // Debug print to check the decoded full_path
-    printf("full_path: %s\n", full_path);
+    // printf("full_path: %s\n", full_path);
 
     // Handle only GET requests
     if (strcmp(method, "GET") != 0) {
@@ -214,12 +235,8 @@ void handle_request(int client_socket) {
         fprintf(fp, "\r\n");                   // End of headers
         fflush(fp);                            // Flush the FILE* to ensure the response is sent
 
-        // Shutdown the socket for further sends and receives
-        shutdown(client_socket, SHUT_RDWR);
-
-        // Close the FILE* and the socket
+        // Close the FILE*
         fclose(fp);
-        close(client_socket);
         return;
     }
     // If the requested path is a directory without a trailing slash, redirect
@@ -231,12 +248,8 @@ void handle_request(int client_socket) {
         fprintf(fp, "\r\n");                   // End of headers
         fflush(fp);                            // Flush the FILE* to ensure the response is sent
 
-        // Shutdown the socket for further sends and receives
-        shutdown(client_socket, SHUT_RDWR);
-
-        // Close the FILE* and the socket
+        // Close the FILE*
         fclose(fp);
-        close(client_socket);
         return;
     }
 
@@ -264,12 +277,8 @@ void handle_request(int client_socket) {
 
             fflush(fp);  // Flush the FILE* to ensure the response is sent
 
-            // Shutdown the socket for further sends and receives
-            shutdown(client_socket, SHUT_RDWR);
-
-            // Close the FILE* and the socket
+            // Close the FILE*
             fclose(fp);
-            close(client_socket);
             return;
         }
     }
@@ -314,12 +323,8 @@ void handle_request(int client_socket) {
 
         fflush(fp);  // Flush the FILE* to ensure the response is sent
 
-        // Shutdown the socket for further sends and receives
-        shutdown(client_socket, SHUT_RDWR);
-
-        // Close the FILE* and the socket
+        // Close the FILE*
         fclose(fp);
-        close(client_socket);
         return;
     }
 
@@ -336,54 +341,52 @@ void handle_request(int client_socket) {
         else if (strcmp(file_extension, ".mp3") == 0)
             mime_type = "audio/mpeg";
     }
-
+    // Determine the size of the file
+    off_t file_size = lseek(file_fd, 0, SEEK_END);
+    lseek(file_fd, 0, SEEK_SET);  // Reset file position to the beginning
+    printf("[*] Sending %lld bytes file...", (long long)file_size);
     // Send the HTTP headers
     fprintf(fp, "HTTP/1.0 200 OK\r\n");
     fprintf(fp, "Content-Type: %s; charset=utf-8\r\n", mime_type);
+    fprintf(fp, "Content-Length: %lld\r\n", (long long)file_size);
+    fprintf(fp, "Connection: close\r\n");
     fprintf(fp, "\r\n");
 
-    // Set the client socket to non-blocking mode
-    if (set_non_blocking(client_socket) == -1) {
-        // Handle error
-        perror("set_non_blocking");
-        fclose(fp);
-        close(file_fd);
-        close(client_socket);
-        return;
-    }
-
-    // Send the file content
+    // Send the file content with non-blocking sockets
     while (1) {
         ssize_t bytes_read = read(file_fd, buf, sizeof(buf));
-        if (bytes_read <= 0) {
-            // End of file or error
+        if (bytes_read < 0) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // No more data available at the moment, continue with other tasks
+                break;
+            } else {
+                // Handle other read errors
+                perror("read");
+                break;
+            }
+        } else if (bytes_read == 0) {
+            // End of file
             break;
         }
 
         ssize_t bytes_sent = send_non_blocking(client_socket, buf, bytes_read);
-
         if (bytes_sent < 0) {
-            // Handle send error
-            perror("send_non_blocking");
-
-            // Log the error
-            fprintf(stderr, "Error sending data to client: %s\n", strerror(errno));
-
-            // You might choose to continue or break the loop based on your requirements
-            break;
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                // The socket buffer is full, try again later
+                continue;
+            } else {
+                // Handle other send errors
+                perror("send_non_blocking");
+                break;
+            }
+        } else if (bytes_sent < bytes_read) {
+            // Not all data was sent, adjust buffer position for the next iteration
+            memmove(buf, buf + bytes_sent, bytes_read - bytes_sent);
         }
     }
-
-    // Flush the FILE* to ensure all data is written
     fflush(fp);
-
-    // Shutdown the socket for further sends and receives
-    shutdown(client_socket, SHUT_RDWR);
 
     // Close the FILE* and the file descriptor
     fclose(fp);
     close(file_fd);
-
-    // Close the socket after ensuring all data is sent
-    close(client_socket);
 }
