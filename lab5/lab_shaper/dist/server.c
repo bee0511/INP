@@ -58,8 +58,8 @@ int main() {
         }
 
         // ----- delay -------
-        char ans[] = "server";
-        send(connfd, ans, strlen(ans), 0);
+        char delay_buf[] = "A";
+        send(connfd, delay_buf, sizeof(delay_buf), 0);
 
         char buffer[BUFFER_SIZE];
         memset(buffer, 'a', sizeof(buffer));

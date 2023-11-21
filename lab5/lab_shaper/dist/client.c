@@ -71,7 +71,6 @@ int getBandwidth(int sockfd) {
 
         memset(buf, '\0', sizeof(buf));
         bytesRead = recv(sockfd, buf, sizeof(buf), 0);
-        buf[bytesRead] = '\0';
 
         gettimeofday(&end, NULL);
         bw_arr[num_packet] = bytesRead * 8 / ((end.tv_sec - start.tv_sec) * 1000000 + end.tv_usec - start.tv_usec);
