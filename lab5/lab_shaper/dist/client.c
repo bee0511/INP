@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <fenv.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -16,7 +17,7 @@
 #define BUFFER_SIZE 1024 * 1024 * 2  // 2MB
 #define NUM_MEASURE 100
 #define NUM_SKIPS 10
-#define NUM_SKIP_BEGIN 40
+#define NUM_SKIP_BEGIN 35
 #define NUM_SKIP_END 25
 
 float total_bytes = 0;
@@ -57,12 +58,13 @@ long getDelay(int sockfd) {
     return ((end.tv_sec - start.tv_sec) * 1000000 + end.tv_usec - start.tv_usec) / 1000;  // delay in ms
 }
 
-int getBandwidth(int sockfd) {
+float getBandwidth(int sockfd) {
     char buf[BUFFER_SIZE];
     int num_packet = 0;
     int bw_arr[NUM_MEASURE];
     long bytesRead;
     struct timeval start, end;
+    fesetround(FE_TONEAREST);
 
     memset(bw_arr, 0, sizeof(bw_arr));
 
@@ -87,7 +89,7 @@ int getBandwidth(int sockfd) {
         total_count++;
     }
 
-    return total_bw / total_count;
+    return rint((float)total_bw / (float)total_count);
 }
 
 int getBandwidthHarmonic(int sockfd) {
@@ -127,10 +129,10 @@ int main() {
     int sockfd = createTCPConnection();
 
     long delay = getDelay(sockfd);
-    int bandwidth = getBandwidth(sockfd);
+    float bandwidth = getBandwidth(sockfd);
     // int bandwidth = getBandwidthHarmonic(sockfd);
 
-    printf("# RESULTS: delay = %ld ms, bandwidth = %d Mbps\n", delay / 2, bandwidth);
+    printf("# RESULTS: delay = %ld ms, bandwidth = %f Mbps\n", delay / 2, bandwidth);
 
     close(sockfd);
 
