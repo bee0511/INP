@@ -1,7 +1,7 @@
 #!/bin/bash
 set -ex
 
-g++ -static -o ./src/server ./src/server.cpp
-g++ -static -o ./src/client ./src/client.cpp
+g++ -static -o ./bin/server ./src/server.cpp
+g++ -static -o ./bin/client ./src/client.cpp
 
-python submit.py ./src/server ./src/client 
+python submit.py ./bin/server ./bin/client 
