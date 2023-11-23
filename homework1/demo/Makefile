@@ -8,7 +8,7 @@ all: server
 	$(CC) -c -g -Wall $<
 
 server: server.o
-	$(CC) -o $@ -static $^
+	$(CC) -o $@ -static server.c utils.c
 
 clean:
 	rm -f *.o $(PROGS)
