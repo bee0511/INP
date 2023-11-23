@@ -1,25 +1,18 @@
-#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <iconv.h>
-#include <langinfo.h>
-#include <libgen.h>
-#include <locale.h>
 #include <netinet/in.h>
-#include <pthread.h>
-#include <stdint.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <strings.h>
-#include <sys/epoll.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/types.h>
+#include <time.h>
 #include <unistd.h>
 
-#define MAX_CONNECTIONS 10  // Adjust as needed
-#define MAX_EVENTS 10
+#define MAX_CLIENTS 32
 
 #define errquit(m) \
     {              \
@@ -27,289 +20,318 @@
         exit(-1);  \
     }
 
-void handle_request(int client_socket);
+int hex_to_int(char c) {
+    if (c >= '0' && c <= '9')
+        return c - '0';
+    else if (c >= 'A' && c <= 'F')
+        return c - 'A' + 10;
+    else if (c >= 'a' && c <= 'f')
+        return c - 'a' + 10;
 
-// URL-decode function
-int url_decode(const char *encoded, char *decoded, size_t decoded_size) {
-    size_t i, j;
-    for (i = 0, j = 0; i < strlen(encoded) && j < decoded_size - 1; ++i, ++j) {
-        if (encoded[i] == '%' && i + 2 < strlen(encoded)) {
-            int value;
-            if (sscanf(encoded + i + 1, "%02x", &value) == 1) {
-                decoded[j] = (char)value;
-                i += 2;
-            } else {
-                return -1;  // Invalid percent encoding
-            }
-        } else if (encoded[i] == '+') {
-            decoded[j] = ' ';
-        } else {
-            decoded[j] = encoded[i];
-        }
-    }
-    decoded[j] = '\0';
-    return 0;
+    return -1;  // Invalid hex digit
 }
 
-int main(int argc, char *argv[]) {
-    int server_socket, client_socket;
-    struct sockaddr_in sin, csin;
-    socklen_t csinlen = sizeof(csin);
+void url_decode(const char* url, char* decoded) {
+    size_t len = strlen(url);
+    size_t decoded_pos = 0;
 
-    if ((server_socket = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
-        errquit("socket");
+    for (size_t i = 0; i < len; i++) {
+        if (url[i] == '%' && i + 2 < len && ((url[i + 1] >= '0' && url[i + 1] <= '9') || (url[i + 1] >= 'A' && url[i + 1] <= 'F') || (url[i + 1] >= 'a' && url[i + 1] <= 'f')) && ((url[i + 2] >= '0' && url[i + 2] <= '9') || (url[i + 2] >= 'A' && url[i + 2] <= 'F') || (url[i + 2] >= 'a' && url[i + 2] <= 'f'))) {
+            int value = (hex_to_int(url[i + 1]) << 4) | hex_to_int(url[i + 2]);
+            decoded[decoded_pos++] = (char)value;
+            i += 2;
+        } else
+            decoded[decoded_pos++] = url[i];
+    }
+    // Null-terminate the decoded string
+    decoded[decoded_pos] = '\0';
+}
 
-    do {
-        int v = 1;
-        if (setsockopt(server_socket, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(v)) < 0)
-            errquit("setsockopt");
-    } while (0);
+const char* extract_file_path(const char* path) {
+    const char* question_mark = strchr(path, '?');
+    size_t path_length = question_mark ? (size_t)(question_mark - path) : strlen(path);
+
+    char* file_path = malloc(path_length + 1);
+    if (!file_path) return NULL;
+    strncpy(file_path, path, path_length);
+    file_path[path_length] = '\0';
+
+    return file_path;
+}
+
+struct HttpResponse {
+    int StatusCode;
+    const char* StatusDescription;
+    const char* Content;
+    const char* ContentType;
+    size_t ContentLength;  // for 200
+};
+
+void send_http_response(int client_fd, const struct HttpResponse* response) {
+    time_t now = time(0);
+    struct tm* timeinfo = gmtime(&now);
+    char date_str[80];
+    strftime(date_str, sizeof(date_str), "%a, %d %b %Y %H:%M:%S GMT", timeinfo);
+
+    const char* response_format =
+        "HTTP/1.0 %d %s\r\n"
+        "Date: %s\r\n"
+        "Server: MyServer\r\n"
+        "Content-Length: %zu\r\n"
+        "Content-Type: %s\r\n"
+        "\r\n"
+        "%s";
+
+    const char* response_format_redirect =
+        "HTTP/1.0 %d %s\r\n"
+        "Date: %s\r\n"
+        "Server: MyServer\r\n"
+        "Location: %s\r\n"
+        "Content-Length: 0\r\n"
+        "Content-Type: %s\r\n\r\n";
+
+    size_t response_length;
+    if (response->StatusCode == 301) {
+        response_length = snprintf(NULL, 0, response_format_redirect,
+                                   response->StatusCode, response->StatusDescription, date_str,
+                                   response->Content, response->ContentType);
+    } else if (response->StatusCode == 200 && strcmp(response->ContentType, "text/html") != 0) {
+        response_length = snprintf(NULL, 0, response_format,
+                                   response->StatusCode, response->StatusDescription, date_str,
+                                   response->ContentLength, response->ContentType, "");
+    } else {
+        response_length = snprintf(NULL, 0, response_format,
+                                   response->StatusCode, response->StatusDescription, date_str,
+                                   strlen(response->Content), response->ContentType, response->Content);
+    }
+
+    char* full_response = malloc(response_length + 1);
+    if (full_response == NULL) {
+        fprintf(stderr, "Memory allocation error\n");
+        return;
+    }
+    if (response->StatusCode == 301) {
+        snprintf(full_response, response_length + 1, response_format_redirect,
+                 response->StatusCode, response->StatusDescription, date_str,
+                 response->Content, response->ContentType);
+    } else if (response->StatusCode == 200 && strcmp(response->ContentType, "text/html") != 0) {
+        snprintf(full_response, response_length + 1, response_format,
+                 response->StatusCode, response->StatusDescription, date_str,
+                 response->ContentLength, response->ContentType, "");
+    } else {
+        snprintf(full_response, response_length + 1, response_format,
+                 response->StatusCode, response->StatusDescription, date_str,
+                 strlen(response->Content), response->ContentType, response->Content);
+    }
+
+    dprintf(client_fd, "%s", full_response);
+    if (response->StatusCode == 200 && strcmp(response->ContentType, "text/html") != 0) write(client_fd, response->Content, response->ContentLength);
+    free(full_response);
+}
+
+void handle_get_request(int client_fd, const char* request) {
+    char method[10];
+    char path[1024];
+    sscanf(request, "%9s %255s", method, path);
+    if (strcmp(method, "GET") != 0)  // 501 OKAY
+    {
+        struct HttpResponse response =
+            {
+                501,
+                "Not Implemented",
+                "<html><body><h1>501 Not Implemented</h1></body></html>",
+                "text/html",
+                0};
+        send_http_response(client_fd, &response);
+    } else  // GET request
+    {
+        const char* file_path = extract_file_path(path);  // remove ?
+        char full_path[4096];
+        snprintf(full_path, sizeof(full_path), "html%s", file_path);
+
+        struct stat path_stat;
+        if (stat(full_path, &path_stat) == 0)  // find file
+        {
+            if (S_ISDIR(path_stat.st_mode))  // is a directory
+            {
+                if (full_path[strlen(full_path) - 1] != '/')  // 301 missing / OKAY
+                {
+                    size_t redirect_url_size = strlen(file_path) + 2;  // 1 for the '/', 1 for the null terminator
+
+                    // Allocate memory for the redirect_url buffer
+                    char* redirect_url = malloc(redirect_url_size);
+                    if (redirect_url != NULL)  // 301 OKAY
+                    {
+                        strcpy(redirect_url, file_path);
+                        strcat(redirect_url, "/");
+                        struct HttpResponse response =
+                            {
+                                301,
+                                "Moved Permanently",
+                                redirect_url,
+                                "text/html",
+                                0};
+                        send_http_response(client_fd, &response);
+
+                        free(redirect_url);
+                    }
+                    return;
+                }
+                // Check for the existence of index.html
+                char index_path[4500];
+                snprintf(index_path, sizeof(index_path), "%s/index.html", full_path);
+                if (access(index_path, F_OK) == -1)  // 403 OKAY
+                {
+                    struct HttpResponse response =
+                        {
+                            403,
+                            "Forbidden",
+                            "<html><body><h1>403 Forbidden</h1></body></html>",
+                            "text/plain",
+                            0};
+                    send_http_response(client_fd, &response);
+                    return;
+                }
+            }
+        } else  // 404 OKAY
+        {
+            struct HttpResponse response =
+                {
+                    404,
+                    "Not Found",
+                    "<html><body><h1>404 Not Found</h1></body></html>",
+                    "text/plain",
+                    0};
+            send_http_response(client_fd, &response);
+            return;
+        }
+
+        // Open and read the file
+        if (strcmp(full_path, "html/") == 0) strcpy(full_path, "html/index.html");
+        FILE* file = fopen(full_path, "rb");
+        if (file)  // 200
+        {
+            const char* mime_type = "application/octet-stream";
+            if (strstr(full_path, ".html") || strstr(full_path, ".txt")) {
+                mime_type = "text/html";
+                fseek(file, 0, SEEK_END);
+                long file_size = ftell(file);
+                rewind(file);
+                char* file_content = malloc(file_size + 1);
+                size_t bytesRead = fread(file_content, 1, file_size, file);
+                file_content[bytesRead] = '\0';
+                struct HttpResponse response =
+                    {
+                        200,
+                        "OK",
+                        file_content,
+                        mime_type,
+                        0};
+                send_http_response(client_fd, &response);
+
+                // Clean up
+                free(file_content);
+                fclose(file);
+                return;
+            } else if (strstr(full_path, ".jpg"))
+                mime_type = "image/jpeg";
+            else if (strstr(full_path, ".mp3"))
+                mime_type = "audio/mpeg";
+            else if (strstr(full_path, ".png"))
+                mime_type = "image/png";
+
+            fseek(file, 0, SEEK_END);
+            long file_size = ftell(file);
+            rewind(file);
+            char* full_content = (char*)malloc(file_size);
+            size_t read_size = fread(full_content, 1, file_size, file);
+
+            struct HttpResponse response =
+                {
+                    200,
+                    "OK",
+                    full_content,
+                    mime_type,
+                    read_size};
+
+            send_http_response(client_fd, &response);
+
+            fclose(file);
+            free(full_content);
+
+            return;
+        }
+    }
+}
+
+int createServerSocket() {
+    int server_fd;
+    struct sockaddr_in sin;
+
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) errquit("socket");
+
+    int v = 1;
+    setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(v));
 
     bzero(&sin, sizeof(sin));
     sin.sin_family = AF_INET;
     sin.sin_port = htons(80);
 
-    if (bind(server_socket, (struct sockaddr *)&sin, sizeof(sin)) < 0)
-        errquit("bind");
+    if (bind(server_fd, (struct sockaddr*)&sin, sizeof(sin)) < 0) errquit("bind");
+    if (listen(server_fd, SOMAXCONN) < 0) errquit("listen");
+    return server_fd;
+}
 
-    if (listen(server_socket, SOMAXCONN) < 0)
-        errquit("listen");
+int main(int argc, char* argv[]) {
+    int server_fd = createServerSocket();
+    int client_fds[MAX_CLIENTS], max_fd;  // max 10
 
-    int max_fd = server_socket;
-    fd_set active_fds, read_fds;
-    FD_ZERO(&active_fds);
-    FD_SET(server_socket, &active_fds);
+    fd_set read_fds;
+    for (int i = 0; i < MAX_CLIENTS; ++i) client_fds[i] = -1;
 
     while (1) {
-        read_fds = active_fds;
+        FD_ZERO(&read_fds);
+        FD_SET(server_fd, &read_fds);
+        max_fd = server_fd;
 
-        if (select(max_fd + 1, &read_fds, NULL, NULL, NULL) < 0)
-            errquit("select");
+        for (int i = 0; i < 10; i++) {
+            if (client_fds[i] != -1) {
+                FD_SET(client_fds[i], &read_fds);
+                max_fd = (client_fds[i] > max_fd) ? client_fds[i] : max_fd;
+            }
+        }
 
-        for (int i = 0; i <= max_fd; ++i) {
-            if (FD_ISSET(i, &read_fds)) {
-                if (i == server_socket) {
-                    // New connection
-                    if ((client_socket = accept(server_socket, (struct sockaddr *)&csin, &csinlen)) < 0) {
-                        perror("accept");
-                        continue;
-                    }
+        if (select(max_fd + 1, &read_fds, NULL, NULL, NULL) == -1) {
+            perror("select");
+            exit(EXIT_FAILURE);
+        }
+        if (FD_ISSET(server_fd, &read_fds)) {
+            int client_fd = accept(server_fd, NULL, NULL);
 
-                    if (client_socket >= FD_SETSIZE) {
-                        fprintf(stderr, "Too many connections. Connection limit: %d\n", FD_SETSIZE);
-                        close(client_socket);
-                        continue;
-                    }
+            for (int i = 0; i < MAX_CLIENTS; i++) {
+                if (client_fds[i] == -1) {
+                    client_fds[i] = client_fd;
+                    break;
+                }
+            }
+        }
 
-                    FD_SET(client_socket, &active_fds);
-                    max_fd = (client_socket > max_fd) ? client_socket : max_fd;
+        for (int i = 0; i < MAX_CLIENTS; i++) {
+            if (client_fds[i] != -1 && FD_ISSET(client_fds[i], &read_fds)) {
+                char request_buffer[4096];
+                ssize_t bytes_received = recv(client_fds[i], request_buffer, sizeof(request_buffer), 0);
+
+                if (bytes_received > 0) {
+                    char decoded_buffer[4096];
+                    url_decode(request_buffer, decoded_buffer);
+                    handle_get_request(client_fds[i], decoded_buffer);
                 } else {
-                    // Data to read on existing connection
-                    handle_request(i);
-
-                    // Shutdown the socket for further sends and receives
-                    if (shutdown(i, SHUT_RDWR) < 0) {
-                        perror("shutdown");
-                    }
-
-                    // Close the file descriptor
-                    if (close(i) < 0) {
-                        perror("close");
-                    }
-
-                    // Remove the socket from the active set
-                    FD_CLR(i, &active_fds);
+                    close(client_fds[i]);
+                    client_fds[i] = -1;
                 }
             }
         }
     }
-
+    close(server_fd);
     return 0;
-}
-
-void handle_request(int client_socket) {
-    setlocale(LC_ALL, "en_US.UTF-8");
-    char buf[4096];
-    FILE *fp;
-    char method[10], path[255];
-
-    if ((fp = fdopen(client_socket, "r+")) == NULL) {
-        perror("fdopen");
-        return;
-    }
-
-    setvbuf(fp, NULL, _IONBF, 0);
-
-    // Read the request line
-    if (fgets(buf, sizeof(buf), fp) == NULL) {
-        fclose(fp);
-        return;
-    }
-
-    // Parse the request line
-    sscanf(buf, "%s %s", method, path);
-
-    // Ignore additional request parameters (query string)
-    strtok(path, "?");
-
-    // URL-decode the path
-    char decoded_path[255];
-    if (url_decode(path, decoded_path, sizeof(decoded_path)) != 0) {
-        // URL decoding failed
-        fprintf(fp, "HTTP/1.0 400 Bad Request\r\n\r\n");
-        fprintf(fp, "Connection: close\r\n");  // Indicate that the connection will be closed
-        fprintf(fp, "\r\n");                   // End of headers
-        fflush(fp);                            // Flush the FILE* to ensure the response is sent
-        return;
-    }
-
-    // Construct the full file path by appending "/html" to the decoded path
-    char full_path[4096];
-    snprintf(full_path, sizeof(full_path), "html%s", decoded_path);
-
-    // Debug print to check the decoded full_path
-    // printf("full_path: %s\n", full_path);
-
-    // Handle only GET requests
-    if (strcmp(method, "GET") != 0) {
-        // Unsupported HTTP method
-        fprintf(fp, "HTTP/1.0 501 Not Implemented\r\n\r\n");
-        fprintf(fp, "Connection: close\r\n");  // Indicate that the connection will be closed
-        fprintf(fp, "\r\n");                   // End of headers
-        fflush(fp);                            // Flush the FILE* to ensure the response is sent
-        return;
-    }
-    // If the requested path is a directory without a trailing slash, redirect
-    struct stat stat_buf;
-    if (stat(full_path, &stat_buf) == 0 && S_ISDIR(stat_buf.st_mode) && path[strlen(path) - 1] != '/') {
-        // Redirect to the directory with a trailing slash
-        fprintf(fp, "HTTP/1.0 301 Moved Permanently\r\nLocation: %s/\r\n\r\n", path);
-        fprintf(fp, "Connection: close\r\n");  // Indicate that the connection will be closed
-        fprintf(fp, "\r\n");                   // End of headers
-        fflush(fp);                            // Flush the FILE* to ensure the response is sent
-        return;
-    }
-
-    // If the requested path is a directory and there is no index.html file, return 403 Forbidden
-    if (stat(full_path, &stat_buf) == 0 && S_ISDIR(stat_buf.st_mode) && path[strlen(path) - 1] == '/') {
-        // Check if there is an index.html file in the directory
-        char index_path[4096 + sizeof("/index.html")];
-        snprintf(index_path, sizeof(index_path), "%s/index.html", full_path);
-        if (access(index_path, F_OK) != 0) {
-            // No index.html file, return 403 Forbidden
-            fprintf(fp, "HTTP/1.0 403 Forbidden\r\n");
-            fprintf(fp, "Content-Type: text/html\r\n");
-            fprintf(fp, "Connection: close\r\n");
-            fprintf(fp, "\r\n");  // End of headers
-
-            // Custom HTML message for 403 Forbidden
-            fprintf(fp, "<html>\n");
-            fprintf(fp, " <head>\n");
-            fprintf(fp, "  <title>403 Forbidden</title>\n");
-            fprintf(fp, " </head>\n");
-            fprintf(fp, " <body>\n");
-            fprintf(fp, "  <h1>403 Forbidden</h1>\n");
-            fprintf(fp, " </body>\n");
-            fprintf(fp, "</html>\n");
-
-            fflush(fp);  // Flush the FILE* to ensure the response is sent
-
-            return;
-        }
-    }
-
-    // If the requested path is the root ("/") without a trailing slash, check for "index.html"
-    if (strcmp(decoded_path, "/") == 0) {
-        char temp_full_path[4096];  // Temporary buffer for snprintf result
-
-        // Use snprintf to ensure null-termination
-        int snprintf_result = snprintf(temp_full_path, sizeof(temp_full_path), "%s/index.html", full_path);
-
-        // Check if "index.html" exists
-        if (snprintf_result > 0 && snprintf_result < sizeof(temp_full_path) &&
-            access(temp_full_path, F_OK) == 0) {
-            // "index.html" found, update full_path
-            strncpy(full_path, temp_full_path, sizeof(full_path) - 1);
-            full_path[sizeof(full_path) - 1] = '\0';
-        }
-    }
-
-    // Open the file for reading
-    int file_fd = open(full_path, O_RDONLY);
-    if (file_fd < 0) {
-        // File not found
-        fprintf(fp, "HTTP/1.0 404 Not Found\r\n");
-        fprintf(fp, "Content-Type: text/html\r\n");
-        fprintf(fp, "Connection: close\r\n");
-        fprintf(fp, "\r\n");  // End of headers
-
-        // Custom XML message for 404 Not Found
-        fprintf(fp, "<?xml version=\"1.0\" encoding=\"iso-8859-1\"?>\n");
-        fprintf(fp, "<!DOCTYPE html PUBLIC \"-//W3C//DTD XHTML 1.0 Transitional//EN\"\n");
-        fprintf(fp, "         \"http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd\">\n");
-        fprintf(fp, "<html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"en\" lang=\"en\">\n");
-        fprintf(fp, " <head>\n");
-        fprintf(fp, "  <title>404 Not Found</title>\n");
-        fprintf(fp, " </head>\n");
-        fprintf(fp, " <body>\n");
-        fprintf(fp, "  <h1>404 Not Found</h1>\n");
-        fprintf(fp, " </body>\n");
-        fprintf(fp, "</html>\n");
-
-        fflush(fp);  // Flush the FILE* to ensure the response is sent
-        return;
-    }
-
-    // Determine the MIME type based on the file extension
-    char *mime_type = "text/plain";
-    char *file_extension = strrchr(full_path, '.');
-    if (file_extension != NULL) {
-        if (strcmp(file_extension, ".html") == 0)
-            mime_type = "text/html";
-        else if (strcmp(file_extension, ".jpg") == 0)
-            mime_type = "image/jpeg";
-        else if (strcmp(file_extension, ".png") == 0)
-            mime_type = "image/png";
-        else if (strcmp(file_extension, ".mp3") == 0)
-            mime_type = "audio/mpeg";
-    }
-
-    // Determine the size of the file
-    off_t file_size = lseek(file_fd, 0, SEEK_END);
-    lseek(file_fd, 0, SEEK_SET);  // Reset file position to the beginning
-                                  // Send the HTTP headers
-    fprintf(fp, "HTTP/1.0 200 OK\r\n");
-    fprintf(fp, "Content-Length: %lld\r\n", (long long)file_size);
-    fprintf(fp, "Content-Type: %s; charset=utf-8\r\n", mime_type);
-    fprintf(fp, "\r\n");
-    fflush(fp);
-
-    // Read the entire file content into a buffer
-    char *file_content = (char *)malloc(file_size);
-    if (file_content == NULL) {
-        perror("Error allocating memory for file content");
-        // Handle memory allocation error
-        return;
-    }
-
-    ssize_t total_bytes_read = 0;
-    while (total_bytes_read < file_size) {
-        ssize_t bytes_read = read(file_fd, file_content + total_bytes_read, file_size - total_bytes_read);
-        if (bytes_read <= 0) {
-            // Handle read error or end of file
-            perror("Error reading file");
-            free(file_content);
-            return;
-        }
-        total_bytes_read += bytes_read;
-    }
-
-    // Use fwrite to send the entire file content to the client via fp
-    if (fwrite(file_content, 1, file_size, fp) != file_size) {
-        // Handle write error
-        perror("Error writing file content to client");
-    }
-
-    // Free the allocated memory
-    free(file_content);
 }
