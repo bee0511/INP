@@ -1,32 +1,22 @@
 #include "header.h"
 
-int hexToInteger(char c) {
-    if (c >= '0' && c <= '9')
-        return c - '0';
-    else if (c >= 'A' && c <= 'F')
-        return c - 'A' + 10;
-    else if (c >= 'a' && c <= 'f')
-        return c - 'a' + 10;
-
-    return -1;  // Invalid hex digit
-}
-
 void urlDecode(const char* url, char* decoded) {
     size_t len = strlen(url);
     size_t decoded_pos = 0;
 
     for (size_t i = 0; i < len; i++) {
-        if (url[i] == '%' && i + 2 < len && ((url[i + 1] >= '0' && url[i + 1] <= '9') || (url[i + 1] >= 'A' && url[i + 1] <= 'F') || (url[i + 1] >= 'a' && url[i + 1] <= 'f')) && ((url[i + 2] >= '0' && url[i + 2] <= '9') || (url[i + 2] >= 'A' && url[i + 2] <= 'F') || (url[i + 2] >= 'a' && url[i + 2] <= 'f'))) {
-            int value = (hexToInteger(url[i + 1]) << 4) | hexToInteger(url[i + 2]);
+        if (url[i] == '%' && i + 2 < len && isxdigit(url[i + 1]) && isxdigit(url[i + 2])) {
+            char hex[3] = {url[i + 1], url[i + 2], '\0'};
+            int value = (int)strtol(hex, NULL, 16);
             decoded[decoded_pos++] = (char)value;
             i += 2;
-        } else
+        } else {
             decoded[decoded_pos++] = url[i];
+        }
     }
     // Null-terminate the decoded string
     decoded[decoded_pos] = '\0';
 }
-
 char* extractFilePath(const char* path) {
     const char* question_mark = strchr(path, '?');
     size_t path_length = question_mark ? (size_t)(question_mark - path) : strlen(path);
@@ -58,119 +48,103 @@ int createServerSocket() {
 }
 
 void handle501Response(int client_fd) {
-    struct HttpResponse response =
-        {
-            501,
-            "Not Implemented",
-            "<html><body><h1>501 Not Implemented</h1></body></html>",
-            "text/html",
-            0};
+    struct HttpResponse response;
+    response.StatusCode = 501;
+    response.StatusDescription = "Not Implemented";
+    response.Content = "<html><body><h1>501 Not Implemented</h1></body></html>";
+    response.ContentType = "text/html";
+    response.Location = "";
+    response.ContentLength = strlen(response.Content);
     sendHTTPResponse(client_fd, &response);
     return;
 }
 
 void handle404Response(int client_fd) {
-    struct HttpResponse response =
-        {
-            404,
-            "Not Found",
-            "<html><body><h1>404 Not Found</h1></body></html>",
-            "text/html",
-            0};
+    struct HttpResponse response;
+    response.StatusCode = 404;
+    response.StatusDescription = "Not Found";
+    response.Content = "<html><body><h1>404 Not Found</h1></body></html>";
+    response.ContentType = "text/html";
+    response.Location = "";
+    response.ContentLength = strlen(response.Content);
     sendHTTPResponse(client_fd, &response);
     return;
 }
 
 void handle301Response(int client_fd, char* file_path) {
     size_t redirect_url_size = strlen(file_path) + 2;  // 1 for the '/', 1 for the null terminator
+    struct HttpResponse response;
 
     // Allocate memory for the redirect_url buffer
     char* redirect_url = malloc(redirect_url_size);
     if (redirect_url != NULL) {
         strcpy(redirect_url, file_path);
         strcat(redirect_url, "/");
-        struct HttpResponse response =
-            {
-                301,
-                "Moved Permanently",
-                redirect_url,
-                "text/html",
-                0};
-        sendHTTPResponse(client_fd, &response);
-        free(redirect_url);
     }
+    response.StatusCode = 301;
+    response.StatusDescription = "Moved Permanently";
+    response.Content = "";
+    response.ContentType = "text/html";
+    response.Location = redirect_url;
+    response.ContentLength = 0;
+    sendHTTPResponse(client_fd, &response);
+    free(redirect_url);
     return;
 }
 
 void handle403Response(int client_fd) {
-    struct HttpResponse response =
-        {
-            403,
-            "Forbidden",
-            "<html><body><h1>403 Forbidden</h1></body></html>",
-            "text/html",
-            0};
+    struct HttpResponse response;
+    response.StatusCode = 403;
+    response.StatusDescription = "Forbidden";
+    response.Content = "<html><body><h1>403 Forbidden</h1></body></html>";
+    response.ContentType = "text/html";
+    response.Location = "";
+    response.ContentLength = strlen(response.Content);
     sendHTTPResponse(client_fd, &response);
     return;
 }
 
 void handle200Response(int client_fd, char* full_path) {
-    // Open and read the file
+    setlocale(LC_ALL, "en_US.UTF-8");
+
     if (strcmp(full_path, "html/") == 0)
         strcpy(full_path, "html/index.html");
+    // Open and read the file
     FILE* file = fopen(full_path, "rb");
-    const char* mime_type = "application/octet-stream";
-    if (strstr(full_path, ".html") || strstr(full_path, ".txt")) {
-        mime_type = "text/html";
-        fseek(file, 0, SEEK_END);
-        long file_size = ftell(file);
-        rewind(file);
-        char* file_content = malloc(file_size + 1);
-        size_t bytesRead = fread(file_content, 1, file_size, file);
-        file_content[bytesRead] = '\0';
-        struct HttpResponse response =
-            {
-                200,
-                "OK",
-                file_content,
-                mime_type,
-                0};
-        sendHTTPResponse(client_fd, &response);
+    // Get file size
+    fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    rewind(file);
+    // Get file content and read size
+    char* file_content = (char*)malloc(file_size);
+    size_t read_size = fread(file_content, 1, file_size, file);
 
-        // Clean up
-        free(file_content);
-        fclose(file);
-        return;
-    } else if (strstr(full_path, ".jpg"))
+    const char* mime_type = "text/plain";
+    if (strstr(full_path, ".html"))
+        mime_type = "text/html";
+    else if (strstr(full_path, ".jpg"))
         mime_type = "image/jpeg";
     else if (strstr(full_path, ".mp3"))
         mime_type = "audio/mpeg";
     else if (strstr(full_path, ".png"))
         mime_type = "image/png";
 
-    fseek(file, 0, SEEK_END);
-    long file_size = ftell(file);
-    rewind(file);
-    char* full_content = (char*)malloc(file_size);
-    size_t read_size = fread(full_content, 1, file_size, file);
-
-    struct HttpResponse response =
-        {
-            200,
-            "OK",
-            full_content,
-            mime_type,
-            read_size};
-
+    struct HttpResponse response;
+    response.StatusCode = 200;
+    response.StatusDescription = "OK";
+    response.Content = file_content;
+    response.ContentType = mime_type;
+    response.Location = "";
+    response.ContentLength = read_size;
     sendHTTPResponse(client_fd, &response);
 
     fclose(file);
-    free(full_content);
+    free(file_content);
 }
 
 void handleGetRequest(int client_fd, const char* request) {
     char method[10];
-    char path[1024];
+    char path[256];
     sscanf(request, "%9s %255s", method, path);
     if (strcmp(method, "GET") != 0) {
         handle501Response(client_fd);
@@ -178,7 +152,7 @@ void handleGetRequest(int client_fd, const char* request) {
     }
 
     char* file_path = extractFilePath(path);
-    char full_path[4096];
+    char full_path[270];
     snprintf(full_path, sizeof(full_path), "html%s", file_path);
 
     struct stat path_stat;
@@ -194,10 +168,9 @@ void handleGetRequest(int client_fd, const char* request) {
             return;
         }
         // Check for the existence of index.html
-        char index_path[4500];
+        char index_path[300];
         snprintf(index_path, sizeof(index_path), "%s/index.html", full_path);
-        if (access(index_path, F_OK) == -1)  // 403 OKAY
-        {
+        if (access(index_path, F_OK) == -1) {
             handle403Response(client_fd);
             return;
         }
@@ -208,64 +181,66 @@ void handleGetRequest(int client_fd, const char* request) {
 }
 
 void sendHTTPResponse(int client_fd, const struct HttpResponse* response) {
-    const char* response_format =
+    const char* base_format =
         "HTTP/1.0 %d %s\r\n"
-        "Date: %s\r\n"
-        "Server: MyServer\r\n"
         "Content-Length: %zu\r\n"
-        "Content-Type: %s\r\n"
-        "\r\n"
-        "%s";
+        "Content-Type: %s; charset=utf-8\r\n";
 
-    const char* response_format_redirect =
-        "HTTP/1.0 %d %s\r\n"
-        "Date: %s\r\n"
-        "Server: MyServer\r\n"
-        "Location: %s\r\n"
-        "Content-Length: 0\r\n"
-        "Content-Type: %s\r\n\r\n";
+    const char* location_str = "Location: %s\r\n";
+    const char* end_str = "\r\n";
 
-    time_t now = time(0);
-    struct tm* timeinfo = gmtime(&now);
-    char date_str[80];
-    strftime(date_str, sizeof(date_str), "%a, %d %b %Y %H:%M:%S GMT", timeinfo);
+    // Calculate the total length needed for the format string
+    size_t total_length = snprintf(NULL, 0, "%s%s%s",
+                                   base_format,
+                                   (response->StatusCode == 301) ? location_str : "",
+                                   end_str);
 
-    size_t response_length;
-    if (response->StatusCode == 301) {
-        response_length = snprintf(NULL, 0, response_format_redirect,
-                                   response->StatusCode, response->StatusDescription, date_str,
-                                   response->Content, response->ContentType);
-    } else if (response->StatusCode == 200 && strcmp(response->ContentType, "text/html") != 0) {
-        response_length = snprintf(NULL, 0, response_format,
-                                   response->StatusCode, response->StatusDescription, date_str,
-                                   response->ContentLength, response->ContentType, "");
-    } else {
-        response_length = snprintf(NULL, 0, response_format,
-                                   response->StatusCode, response->StatusDescription, date_str,
-                                   strlen(response->Content), response->ContentType, response->Content);
-    }
-
-    char* full_response = malloc(response_length + 1);
-    if (full_response == NULL) {
+    // Allocate memory for the format string
+    char* response_format = malloc(total_length + 1);
+    if (response_format == NULL) {
         fprintf(stderr, "Memory allocation error\n");
         return;
     }
-    if (response->StatusCode == 301) {
-        snprintf(full_response, response_length + 1, response_format_redirect,
-                 response->StatusCode, response->StatusDescription, date_str,
-                 response->Content, response->ContentType);
-    } else if (response->StatusCode == 200 && strcmp(response->ContentType, "text/html") != 0) {
-        snprintf(full_response, response_length + 1, response_format,
-                 response->StatusCode, response->StatusDescription, date_str,
-                 response->ContentLength, response->ContentType, "");
-    } else {
-        snprintf(full_response, response_length + 1, response_format,
-                 response->StatusCode, response->StatusDescription, date_str,
-                 strlen(response->Content), response->ContentType, response->Content);
+
+    // Construct the format string
+    snprintf(response_format, total_length + 1, "%s%s%s",
+             base_format,
+             (response->StatusCode == 301) ? location_str : "",
+             end_str);
+
+    // Calculate the total length needed for the full response
+    size_t response_length = snprintf(NULL, 0, response_format,
+                                      response->StatusCode,
+                                      response->StatusDescription,
+                                      response->ContentLength,
+                                      response->ContentType,
+                                      (response->StatusCode == 301) ? response->Location : "");
+
+    // Allocate memory for the full response
+    char* full_response = malloc(response_length + 1);
+    if (full_response == NULL) {
+        fprintf(stderr, "Memory allocation error\n");
+        free(response_format);
+        return;
     }
 
+    // Construct the full response
+    snprintf(full_response, response_length + 1, response_format,
+             response->StatusCode,
+             response->StatusDescription,
+             response->ContentLength,
+             response->ContentType,
+             (response->StatusCode == 301) ? response->Location : "");
+
+    // Send the response to the client
     dprintf(client_fd, "%s", full_response);
-    if (response->StatusCode == 200 && strcmp(response->ContentType, "text/html") != 0) write(client_fd, response->Content, response->ContentLength);
+
+    // If it's not a redirect, also write the content
+    if (response->StatusCode != 301) {
+        write(client_fd, response->Content, response->ContentLength);
+    }
+
+    // Cleanup
     free(full_response);
-    return;
+    free(response_format);
 }

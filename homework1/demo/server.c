@@ -2,7 +2,7 @@
 
 int main(int argc, char* argv[]) {
     int server_fd = createServerSocket();
-    int client_fds[MAX_CLIENTS], max_fd;  // max 10
+    int client_fds[MAX_CLIENTS], max_fd; 
 
     fd_set read_fds;
     for (int i = 0; i < MAX_CLIENTS; ++i) client_fds[i] = -1;

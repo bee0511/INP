@@ -13,7 +13,7 @@ lab4/lab4
 otp1.txt
 internal
 homework1/demo/server
-homework1/demo/server.o
+homework1/demo/*.o
 lab5/lab_shaper/dist/client
 lab5/lab_shaper/dist/client.o
 lab5/lab_shaper/dist/server

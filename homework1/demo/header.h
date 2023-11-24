@@ -1,5 +1,9 @@
+#include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <langinfo.h>
+#include <libgen.h>
+#include <locale.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -28,10 +32,10 @@ struct HttpResponse {
     const char* StatusDescription;
     const char* Content;
     const char* ContentType;
-    size_t ContentLength;  // for 200
+    const char* Location;
+    size_t ContentLength;
 };
 
-int hexToInteger(char c);
 void urlDecode(const char* url, char* decoded);
 char* extractFilePath(const char* path);
 int createServerSocket();
