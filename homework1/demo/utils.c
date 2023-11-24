@@ -179,68 +179,53 @@ void handleGetRequest(int client_fd, const char* request) {
     handle200Response(client_fd, full_path);
     return;
 }
-
 void sendHTTPResponse(int client_fd, const struct HttpResponse* response) {
-    const char* base_format =
-        "HTTP/1.0 %d %s\r\n"
-        "Content-Length: %zu\r\n"
-        "Content-Type: %s; charset=utf-8\r\n";
+    setlocale(LC_ALL, "en_US.UTF-8");
+    size_t response_length;
+    if (response->StatusCode == 301) {
+        const char* response_format_redirect =
+            "HTTP/1.0 %d %s\r\n"
+            "Content-Length: %zu\r\n"
+            "Content-Type: %s\r\n"
+            "Location: %s\r\n"
+            "\r\n";
+        response_length = snprintf(NULL, 0, response_format_redirect,
+                                   response->StatusCode,
+                                   response->StatusDescription,
+                                   response->ContentLength,
+                                   response->ContentType,
+                                   response->Location);
+        char* full_response = malloc(response_length + 1);
+        snprintf(full_response, response_length + 1, response_format_redirect,
+                 response->StatusCode,
+                 response->StatusDescription,
+                 response->ContentLength,
+                 response->ContentType,
+                 response->Location);
+        dprintf(client_fd, "%s", full_response);
+        free(full_response);
+    } else {
+        const char* response_format =
+            "HTTP/1.0 %d %s\r\n"
+            "Content-Length: %zu\r\n"
+            "Content-Type: %s; charset=utf-8\r\n"
+            "\r\n";
+        response_length = snprintf(NULL, 0, response_format,
+                                   response->StatusCode,
+                                   response->StatusDescription,
+                                   response->ContentLength,
+                                   response->ContentType);
+        char* full_response = malloc(response_length + 1);
+        snprintf(full_response, response_length + 1, response_format,
+                 response->StatusCode,
+                 response->StatusDescription,
+                 response->ContentLength,
+                 response->ContentType);
+        dprintf(client_fd, "%s", full_response);
 
-    const char* location_str = "Location: %s\r\n";
-    const char* end_str = "\r\n";
-
-    // Calculate the total length needed for the format string
-    size_t total_length = snprintf(NULL, 0, "%s%s%s",
-                                   base_format,
-                                   (response->StatusCode == 301) ? location_str : "",
-                                   end_str);
-
-    // Allocate memory for the format string
-    char* response_format = malloc(total_length + 1);
-    if (response_format == NULL) {
-        fprintf(stderr, "Memory allocation error\n");
-        return;
-    }
-
-    // Construct the format string
-    snprintf(response_format, total_length + 1, "%s%s%s",
-             base_format,
-             (response->StatusCode == 301) ? location_str : "",
-             end_str);
-
-    // Calculate the total length needed for the full response
-    size_t response_length = snprintf(NULL, 0, response_format,
-                                      response->StatusCode,
-                                      response->StatusDescription,
-                                      response->ContentLength,
-                                      response->ContentType,
-                                      (response->StatusCode == 301) ? response->Location : "");
-
-    // Allocate memory for the full response
-    char* full_response = malloc(response_length + 1);
-    if (full_response == NULL) {
-        fprintf(stderr, "Memory allocation error\n");
-        free(response_format);
-        return;
-    }
-
-    // Construct the full response
-    snprintf(full_response, response_length + 1, response_format,
-             response->StatusCode,
-             response->StatusDescription,
-             response->ContentLength,
-             response->ContentType,
-             (response->StatusCode == 301) ? response->Location : "");
-
-    // Send the response to the client
-    dprintf(client_fd, "%s", full_response);
-
-    // If it's not a redirect, also write the content
-    if (response->StatusCode != 301) {
+        // If it's not a redirect, also write the content
         write(client_fd, response->Content, response->ContentLength);
+        free(full_response);
     }
-
-    // Cleanup
-    free(full_response);
-    free(response_format);
+    return;
 }
