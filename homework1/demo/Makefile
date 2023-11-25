@@ -8,10 +8,10 @@ all: server utils
 	$(CC) -c -g -Wall $<
 
 server: server.o
-	$(CC) -o $@ -static server.c utils.c
+	gcc -o server -O3 -flto -static server.c utils.c -lpthread
 
 utils: utils.o
-	$(CC) -o server -static server.c utils.c
+	gcc -o server -O3 -flto -static server.c utils.c -lpthread
 
 clean:
 	rm -f *.o $(PROGS)

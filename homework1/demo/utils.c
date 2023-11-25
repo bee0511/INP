@@ -225,7 +225,8 @@ void sendHTTPResponse(int client_fd, const struct HttpResponse* response) {
         dprintf(client_fd, "%s", full_response);
 
         // If it's not a redirect, also write the content
-        write(client_fd, response->Content, response->ContentLength);
+        ssize_t written = write(client_fd, response->Content, response->ContentLength);
+        if (written < 0) errquit("Write");
         free(full_response);
     }
     return;
