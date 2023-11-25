@@ -142,7 +142,7 @@ void handle200Response(int client_fd, char* full_path) {
     free(file_content);
 }
 
-void handleGetRequest(int client_fd, const char* request) {
+void handleHTTPRequest(int client_fd, const char* request) {
     char method[10];
     char path[256];
     sscanf(request, "%9s %255s", method, path);
@@ -179,6 +179,7 @@ void handleGetRequest(int client_fd, const char* request) {
     handle200Response(client_fd, full_path);
     return;
 }
+
 void sendHTTPResponse(int client_fd, const struct HttpResponse* response) {
     setlocale(LC_ALL, "en_US.UTF-8");
     size_t response_length;

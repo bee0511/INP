@@ -5,6 +5,7 @@
 #include <libgen.h>
 #include <locale.h>
 #include <netinet/in.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -16,7 +17,8 @@
 #include <time.h>
 #include <unistd.h>
 
-#define MAX_CLIENTS 64
+#define BUFFER_SIZE 1024
+#define INITIAL_CAPACITY 10
 
 #define errquit(m) \
     {              \
@@ -46,6 +48,6 @@ void handle404Response(int client_fd);
 void handle501Response(int client_fd);
 
 void sendHTTPResponse(int client_fd, const struct HttpResponse* response);
-void handleGetRequest(int client_fd, const char* request);
+void handleHTTPRequest(int client_fd, const char* request);
 
 #endif
