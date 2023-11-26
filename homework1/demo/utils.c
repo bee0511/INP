@@ -29,25 +29,82 @@ char* extractFilePath(const char* path) {
     return file_path;
 }
 
-int createServerSocket() {
+int createServerSocket(int port) {
     int server_fd;
     struct sockaddr_in sin;
 
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) errquit("socket");
+    if ((server_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
+        errquit("socket");
+    }
 
     int v = 1;
     setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR, &v, sizeof(v));
 
     bzero(&sin, sizeof(sin));
     sin.sin_family = AF_INET;
-    sin.sin_port = htons(80);
+    sin.sin_port = htons(port);
 
-    if (bind(server_fd, (struct sockaddr*)&sin, sizeof(sin)) < 0) errquit("bind");
-    if (listen(server_fd, SOMAXCONN) < 0) errquit("listen");
-    return server_fd;
+    if (bind(server_fd, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
+        errquit("bind");
+    }
+
+    if (port == 443) {
+        // HTTPS configuration
+        SSL_library_init();
+        SSL_load_error_strings();
+
+        SSL_CTX* ssl_ctx = SSL_CTX_new(SSLv23_server_method());
+        if (!ssl_ctx) {
+            fprintf(stderr, "Error creating SSL context\n");
+            ERR_print_errors_fp(stderr);
+            exit(EXIT_FAILURE);
+        }
+
+        // Load server certificate and private key
+        if (SSL_CTX_use_certificate_file(ssl_ctx, "server.crt", SSL_FILETYPE_PEM) <= 0 ||
+            SSL_CTX_use_PrivateKey_file(ssl_ctx, "server.key", SSL_FILETYPE_PEM) <= 0) {
+            fprintf(stderr, "Error loading server certificate/private key\n");
+            ERR_print_errors_fp(stderr);
+            exit(EXIT_FAILURE);
+        }
+
+        // Set up the SSL context for the server socket
+        if (SSL_CTX_set_cipher_list(ssl_ctx, "TLSv1.2") != 1) {
+            fprintf(stderr, "Error setting cipher list\n");
+            ERR_print_errors_fp(stderr);
+            exit(EXIT_FAILURE);
+        }
+
+        // Set the SSL context for the server socket
+        if (SSL_CTX_set_options(ssl_ctx, SSL_OP_SINGLE_DH_USE) < 0) {
+            fprintf(stderr, "Error setting SSL options\n");
+            ERR_print_errors_fp(stderr);
+            exit(EXIT_FAILURE);
+        }
+
+        // Set the SSL context in the server socket
+        if (bind(server_fd, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
+            errquit("bind");
+        }
+
+        if (listen(server_fd, SOMAXCONN) < 0) {
+            errquit("listen");
+        }
+
+        // Return the server file descriptor
+        return server_fd;
+    } else {
+        // HTTP configuration
+        if (listen(server_fd, SOMAXCONN) < 0) {
+            errquit("listen");
+        }
+
+        // Return the server file descriptor
+        return server_fd;
+    }
 }
 
-void handle501Response(int client_fd) {
+struct HttpResponse get501Response(int client_fd) {
     struct HttpResponse response;
     response.StatusCode = 501;
     response.StatusDescription = "Not Implemented";
@@ -55,11 +112,10 @@ void handle501Response(int client_fd) {
     response.ContentType = "text/html";
     response.Location = "";
     response.ContentLength = strlen(response.Content);
-    sendHTTPResponse(client_fd, &response);
-    return;
+    return response;
 }
 
-void handle404Response(int client_fd) {
+struct HttpResponse get404Response(int client_fd) {
     struct HttpResponse response;
     response.StatusCode = 404;
     response.StatusDescription = "Not Found";
@@ -67,11 +123,10 @@ void handle404Response(int client_fd) {
     response.ContentType = "text/html";
     response.Location = "";
     response.ContentLength = strlen(response.Content);
-    sendHTTPResponse(client_fd, &response);
-    return;
+    return response;
 }
 
-void handle301Response(int client_fd, char* file_path) {
+struct HttpResponse get301Response(int client_fd, char* file_path) {
     size_t redirect_url_size = strlen(file_path) + 2;  // 1 for the '/', 1 for the null terminator
     struct HttpResponse response;
 
@@ -87,12 +142,11 @@ void handle301Response(int client_fd, char* file_path) {
     response.ContentType = "text/html";
     response.Location = redirect_url;
     response.ContentLength = 0;
-    sendHTTPResponse(client_fd, &response);
     free(redirect_url);
-    return;
+    return response;
 }
 
-void handle403Response(int client_fd) {
+struct HttpResponse get403Response(int client_fd) {
     struct HttpResponse response;
     response.StatusCode = 403;
     response.StatusDescription = "Forbidden";
@@ -100,11 +154,10 @@ void handle403Response(int client_fd) {
     response.ContentType = "text/html";
     response.Location = "";
     response.ContentLength = strlen(response.Content);
-    sendHTTPResponse(client_fd, &response);
-    return;
+    return response;
 }
 
-void handle200Response(int client_fd, char* full_path) {
+struct HttpResponse get200Response(int client_fd, char* full_path) {
     setlocale(LC_ALL, "en_US.UTF-8");
 
     if (strcmp(full_path, "html/") == 0)
@@ -136,18 +189,20 @@ void handle200Response(int client_fd, char* full_path) {
     response.ContentType = mime_type;
     response.Location = "";
     response.ContentLength = read_size;
-    sendHTTPResponse(client_fd, &response);
 
     fclose(file);
     free(file_content);
+
+    return response;
 }
 
-void handleHTTPRequest(int client_fd, const char* request) {
+void handleHTTPRequest(struct ClientInfo* client_info, const char* request) {
     char method[10];
     char path[256];
     sscanf(request, "%9s %255s", method, path);
     if (strcmp(method, "GET") != 0) {
-        handle501Response(client_fd);
+        get501Response(client_info->socket);
+
         return;
     }
 
@@ -156,78 +211,171 @@ void handleHTTPRequest(int client_fd, const char* request) {
     snprintf(full_path, sizeof(full_path), "html%s", file_path);
 
     struct stat path_stat;
+    struct HttpResponse response;
 
     if (stat(full_path, &path_stat) != 0) {
-        handle404Response(client_fd);
+        response = get404Response(client_info->socket);
+        sendHTTPResponse(client_info, &response);
         return;
     }
 
     if (S_ISDIR(path_stat.st_mode)) {  // If it is a directory, check 301 and 403
         if (full_path[strlen(full_path) - 1] != '/') {
-            handle301Response(client_fd, file_path);
+            response = get301Response(client_info->socket, file_path);
+            sendHTTPResponse(client_info, &response);
             return;
         }
         // Check for the existence of index.html
         char index_path[300];
         snprintf(index_path, sizeof(index_path), "%s/index.html", full_path);
         if (access(index_path, F_OK) == -1) {
-            handle403Response(client_fd);
+            response = get403Response(client_info->socket);
+            sendHTTPResponse(client_info, &response);
             return;
         }
     }
 
-    handle200Response(client_fd, full_path);
+    response = get200Response(client_info->socket, full_path);
+    sendHTTPResponse(client_info, &response);
     return;
 }
 
-void sendHTTPResponse(int client_fd, const struct HttpResponse* response) {
+void sendHTTPResponse(struct ClientInfo* client_info, const struct HttpResponse* response) {
+    SSL* ssl = client_info->ssl_connection;
+    int client_fd = client_info->socket;
+
     setlocale(LC_ALL, "en_US.UTF-8");
     size_t response_length;
-    if (response->StatusCode == 301) {
-        const char* response_format_redirect =
-            "HTTP/1.0 %d %s\r\n"
-            "Content-Length: %zu\r\n"
-            "Content-Type: %s\r\n"
-            "Location: %s\r\n"
-            "\r\n";
-        response_length = snprintf(NULL, 0, response_format_redirect,
-                                   response->StatusCode,
-                                   response->StatusDescription,
-                                   response->ContentLength,
-                                   response->ContentType,
-                                   response->Location);
-        char* full_response = malloc(response_length + 1);
-        snprintf(full_response, response_length + 1, response_format_redirect,
-                 response->StatusCode,
-                 response->StatusDescription,
-                 response->ContentLength,
-                 response->ContentType,
-                 response->Location);
-        dprintf(client_fd, "%s", full_response);
-        free(full_response);
-    } else {
-        const char* response_format =
-            "HTTP/1.0 %d %s\r\n"
-            "Content-Length: %zu\r\n"
-            "Content-Type: %s; charset=utf-8\r\n"
-            "\r\n";
-        response_length = snprintf(NULL, 0, response_format,
-                                   response->StatusCode,
-                                   response->StatusDescription,
-                                   response->ContentLength,
-                                   response->ContentType);
-        char* full_response = malloc(response_length + 1);
-        snprintf(full_response, response_length + 1, response_format,
-                 response->StatusCode,
-                 response->StatusDescription,
-                 response->ContentLength,
-                 response->ContentType);
-        dprintf(client_fd, "%s", full_response);
+    ssize_t written;
 
-        // If it's not a redirect, also write the content
-        ssize_t written = write(client_fd, response->Content, response->ContentLength);
-        if (written < 0) errquit("Write");
-        free(full_response);
+    if (ssl) {  // If SSL is enabled, use SSL_write
+        if (response->StatusCode == 301) {
+            const char* response_format_redirect =
+                "HTTP/1.0 %d %s\r\n"
+                "Content-Length: %zu\r\n"
+                "Content-Type: %s\r\n"
+                "Location: %s\r\n"
+                "\r\n";
+            response_length = snprintf(NULL, 0, response_format_redirect,
+                                       response->StatusCode,
+                                       response->StatusDescription,
+                                       response->ContentLength,
+                                       response->ContentType,
+                                       response->Location);
+            char* full_response = malloc(response_length + 1);
+            snprintf(full_response, response_length + 1, response_format_redirect,
+                     response->StatusCode,
+                     response->StatusDescription,
+                     response->ContentLength,
+                     response->ContentType,
+                     response->Location);
+
+            written = SSL_write(ssl, full_response, response_length);
+            if (written < 0) {
+                // Handle the error, for example:
+                perror("SSL_write");
+                // Additional error handling as needed
+            }
+            free(full_response);
+        } else {
+            const char* response_format =
+                "HTTP/1.0 %d %s\r\n"
+                "Content-Length: %zu\r\n"
+                "Content-Type: %s; charset=utf-8\r\n"
+                "\r\n";
+            response_length = snprintf(NULL, 0, response_format,
+                                       response->StatusCode,
+                                       response->StatusDescription,
+                                       response->ContentLength,
+                                       response->ContentType);
+            char* full_response = malloc(response_length + 1);
+            snprintf(full_response, response_length + 1, response_format,
+                     response->StatusCode,
+                     response->StatusDescription,
+                     response->ContentLength,
+                     response->ContentType);
+
+            written = write(client_fd, full_response, response_length);
+            if (written < 0) {
+                // Handle the error, for example:
+                perror("write");
+                // Additional error handling as needed
+            }
+            // If it's not a redirect, also write the content
+            written = SSL_write(ssl, response->Content, response->ContentLength);
+            if (written < 0) {
+                // Handle the error, for example:
+                perror("write");
+                // Additional error handling as needed
+            }
+            free(full_response);
+        }
+    } else {  // If SSL is not enabled, use write
+        if (response->StatusCode == 301) {
+            const char* response_format_redirect =
+                "HTTP/1.0 %d %s\r\n"
+                "Content-Length: %zu\r\n"
+                "Content-Type: %s\r\n"
+                "Location: %s\r\n"
+                "\r\n";
+            response_length = snprintf(NULL, 0, response_format_redirect,
+                                       response->StatusCode,
+                                       response->StatusDescription,
+                                       response->ContentLength,
+                                       response->ContentType,
+                                       response->Location);
+            char* full_response = malloc(response_length + 1);
+            snprintf(full_response, response_length + 1, response_format_redirect,
+                     response->StatusCode,
+                     response->StatusDescription,
+                     response->ContentLength,
+                     response->ContentType,
+                     response->Location);
+
+            written = write(client_fd, full_response, response_length);
+            if (written < 0) {
+                // Handle the error, for example:
+                perror("write");
+                // Additional error handling as needed
+            }
+
+            free(full_response);
+        } else {
+            const char* response_format =
+                "HTTP/1.0 %d %s\r\n"
+                "Content-Length: %zu\r\n"
+                "Content-Type: %s; charset=utf-8\r\n"
+                "\r\n";
+            response_length = snprintf(NULL, 0, response_format,
+                                       response->StatusCode,
+                                       response->StatusDescription,
+                                       response->ContentLength,
+                                       response->ContentType);
+            char* full_response = malloc(response_length + 1);
+            snprintf(full_response, response_length + 1, response_format,
+                     response->StatusCode,
+                     response->StatusDescription,
+                     response->ContentLength,
+                     response->ContentType);
+
+            written = write(client_fd, full_response, response_length);
+            if (written < 0) {
+                // Handle the error, for example:
+                perror("write");
+                // Additional error handling as needed
+            }
+
+            // If it's not a redirect, also write the content
+            written = write(client_fd, response->Content, response->ContentLength);
+            if (written < 0) {
+                // Handle the error, for example:
+                perror("write");
+                // Additional error handling as needed
+            }
+
+            free(full_response);
+        }
     }
+
     return;
 }

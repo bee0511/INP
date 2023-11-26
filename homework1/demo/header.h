@@ -5,6 +5,8 @@
 #include <libgen.h>
 #include <locale.h>
 #include <netinet/in.h>
+#include <openssl/err.h>
+#include <openssl/ssl.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -39,16 +41,23 @@ struct HttpResponse {
     size_t ContentLength;
 };
 
+struct ClientInfo {
+    int socket;
+    pthread_t thread;
+    SSL_CTX* ssl_context;
+    SSL* ssl_connection;
+};
+
 void urlDecode(const char* url, char* decoded);
 char* extractFilePath(const char* path);
-int createServerSocket();
-void handle200Response(int client_fd, char* full_path);
-void handle301Response(int client_fd, char* file_path);
-void handle403Response(int client_fd);
-void handle404Response(int client_fd);
-void handle501Response(int client_fd);
+int createServerSocket(int port);
+struct HttpResponse get200Response(int client_fd, char* full_path);
+struct HttpResponse get301Response(int client_fd, char* file_path);
+struct HttpResponse get403Response(int client_fd);
+struct HttpResponse get404Response(int client_fd);
+struct HttpResponse get501Response(int client_fd);
 
-void sendHTTPResponse(int client_fd, const struct HttpResponse* response);
-void handleHTTPRequest(int client_fd, const char* request);
+void sendHTTPResponse(struct ClientInfo* client_info, const struct HttpResponse* response);
+void handleHTTPRequest(struct ClientInfo*, const char* request);
 
 #endif
