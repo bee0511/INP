@@ -45,7 +45,9 @@ int createServerSocket(int port) {
     sin.sin_port = htons(port);
 
     if (bind(server_fd, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
-        errquit("bind");
+        fprintf(stderr, "Error binding to port %d\n", port);
+        perror("bind");
+        exit(EXIT_FAILURE);
     }
 
     if (port == 443) {
@@ -61,8 +63,8 @@ int createServerSocket(int port) {
         }
 
         // Load server certificate and private key
-        if (SSL_CTX_use_certificate_file(ssl_ctx, "server.crt", SSL_FILETYPE_PEM) <= 0 ||
-            SSL_CTX_use_PrivateKey_file(ssl_ctx, "server.key", SSL_FILETYPE_PEM) <= 0) {
+        if (SSL_CTX_use_certificate_file(ssl_ctx, "/cert/server.crt", SSL_FILETYPE_PEM) <= 0 ||
+            SSL_CTX_use_PrivateKey_file(ssl_ctx, "/cert/server.key", SSL_FILETYPE_PEM) <= 0) {
             fprintf(stderr, "Error loading server certificate/private key\n");
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
@@ -75,7 +77,7 @@ int createServerSocket(int port) {
             exit(EXIT_FAILURE);
         }
 
-        // Set the SSL context for the server socket
+        // Set the SSL context options
         if (SSL_CTX_set_options(ssl_ctx, SSL_OP_SINGLE_DH_USE) < 0) {
             fprintf(stderr, "Error setting SSL options\n");
             ERR_print_errors_fp(stderr);
@@ -83,10 +85,6 @@ int createServerSocket(int port) {
         }
 
         // Set the SSL context in the server socket
-        if (bind(server_fd, (struct sockaddr*)&sin, sizeof(sin)) < 0) {
-            errquit("bind");
-        }
-
         if (listen(server_fd, SOMAXCONN) < 0) {
             errquit("listen");
         }
@@ -271,10 +269,14 @@ void sendHTTPResponse(struct ClientInfo* client_info, const struct HttpResponse*
                      response->Location);
 
             written = SSL_write(ssl, full_response, response_length);
-            if (written < 0) {
-                // Handle the error, for example:
-                perror("SSL_write");
-                // Additional error handling as needed
+            if (written <= 0) {
+                int ssl_error = SSL_get_error(ssl, written);
+                if (ssl_error == SSL_ERROR_ZERO_RETURN || ssl_error == SSL_ERROR_SYSCALL) {
+                    // Connection closed or error, handle accordingly
+                } else {
+                    // Handle other SSL errors
+                    ERR_print_errors_fp(stderr);
+                }
             }
             free(full_response);
         } else {
@@ -295,18 +297,26 @@ void sendHTTPResponse(struct ClientInfo* client_info, const struct HttpResponse*
                      response->ContentLength,
                      response->ContentType);
 
-            written = write(client_fd, full_response, response_length);
-            if (written < 0) {
-                // Handle the error, for example:
-                perror("write");
-                // Additional error handling as needed
+            written = SSL_write(ssl, full_response, response_length);
+            if (written <= 0) {
+                int ssl_error = SSL_get_error(ssl, written);
+                if (ssl_error == SSL_ERROR_ZERO_RETURN || ssl_error == SSL_ERROR_SYSCALL) {
+                    // Connection closed or error, handle accordingly
+                } else {
+                    // Handle other SSL errors
+                    ERR_print_errors_fp(stderr);
+                }
             }
             // If it's not a redirect, also write the content
             written = SSL_write(ssl, response->Content, response->ContentLength);
             if (written < 0) {
-                // Handle the error, for example:
-                perror("write");
-                // Additional error handling as needed
+                int ssl_error = SSL_get_error(ssl, written);
+                if (ssl_error == SSL_ERROR_ZERO_RETURN || ssl_error == SSL_ERROR_SYSCALL) {
+                    // Connection closed or error, handle accordingly
+                } else {
+                    // Handle other SSL errors
+                    ERR_print_errors_fp(stderr);
+                }
             }
             free(full_response);
         }
