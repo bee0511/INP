@@ -29,12 +29,13 @@ char* extractFilePath(const char* path) {
     return file_path;
 }
 
-int createServerSocket(int port) {
+int createServerSocket(int port, SSL_CTX* ssl_ctx) {
     int server_fd;
     struct sockaddr_in sin;
 
     if ((server_fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0) {
-        errquit("socket");
+        perror("socket");
+        exit(EXIT_FAILURE);
     }
 
     int v = 1;
@@ -52,41 +53,9 @@ int createServerSocket(int port) {
 
     if (port == 443) {
         // HTTPS configuration
-        SSL_library_init();
-        SSL_load_error_strings();
-
-        SSL_CTX* ssl_ctx = SSL_CTX_new(SSLv23_server_method());
-        if (!ssl_ctx) {
-            fprintf(stderr, "Error creating SSL context\n");
-            ERR_print_errors_fp(stderr);
-            exit(EXIT_FAILURE);
-        }
-
-        // Load server certificate and private key
-        if (SSL_CTX_use_certificate_file(ssl_ctx, "/cert/server.crt", SSL_FILETYPE_PEM) <= 0 ||
-            SSL_CTX_use_PrivateKey_file(ssl_ctx, "/cert/server.key", SSL_FILETYPE_PEM) <= 0) {
-            fprintf(stderr, "Error loading server certificate/private key\n");
-            ERR_print_errors_fp(stderr);
-            exit(EXIT_FAILURE);
-        }
-
-        // Set up the SSL context for the server socket
-        if (SSL_CTX_set_cipher_list(ssl_ctx, "TLSv1.2") != 1) {
-            fprintf(stderr, "Error setting cipher list\n");
-            ERR_print_errors_fp(stderr);
-            exit(EXIT_FAILURE);
-        }
-
-        // Set the SSL context options
-        if (SSL_CTX_set_options(ssl_ctx, SSL_OP_SINGLE_DH_USE) < 0) {
-            fprintf(stderr, "Error setting SSL options\n");
-            ERR_print_errors_fp(stderr);
-            exit(EXIT_FAILURE);
-        }
-
-        // Set the SSL context in the server socket
         if (listen(server_fd, SOMAXCONN) < 0) {
-            errquit("listen");
+            perror("listen");
+            exit(EXIT_FAILURE);
         }
 
         // Return the server file descriptor
@@ -94,7 +63,8 @@ int createServerSocket(int port) {
     } else {
         // HTTP configuration
         if (listen(server_fd, SOMAXCONN) < 0) {
-            errquit("listen");
+            perror("listen");
+            exit(EXIT_FAILURE);
         }
 
         // Return the server file descriptor

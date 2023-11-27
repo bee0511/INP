@@ -22,6 +22,7 @@
 
 #define BUFFER_SIZE 1024
 #define INITIAL_CAPACITY 10
+#define MAX_EVENTS 10
 
 #define errquit(m) \
     {              \
@@ -43,14 +44,13 @@ struct HttpResponse {
 
 struct ClientInfo {
     int socket;
-    pthread_t thread;
     SSL_CTX* ssl_context;
     SSL* ssl_connection;
 };
 
 void urlDecode(const char* url, char* decoded);
 char* extractFilePath(const char* path);
-int createServerSocket(int port);
+int createServerSocket(int port, SSL_CTX* ssl_ctx);
 struct HttpResponse get200Response(int client_fd, char* full_path);
 struct HttpResponse get301Response(int client_fd, char* file_path);
 struct HttpResponse get403Response(int client_fd);
