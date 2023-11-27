@@ -140,7 +140,6 @@ struct HttpResponse get301Response(int client_fd, char* file_path) {
     response.ContentType = "text/html";
     response.Location = redirect_url;
     response.ContentLength = 0;
-    free(redirect_url);
     return response;
 }
 
@@ -189,18 +188,18 @@ struct HttpResponse get200Response(int client_fd, char* full_path) {
     response.ContentLength = read_size;
 
     fclose(file);
-    free(file_content);
-
     return response;
 }
 
 void handleHTTPRequest(struct ClientInfo* client_info, const char* request) {
     char method[10];
     char path[256];
+    struct HttpResponse response;
+
     sscanf(request, "%9s %255s", method, path);
     if (strcmp(method, "GET") != 0) {
-        get501Response(client_info->socket);
-
+        response = get501Response(client_info->socket);
+        sendHTTPResponse(client_info, &response);
         return;
     }
 
@@ -209,7 +208,6 @@ void handleHTTPRequest(struct ClientInfo* client_info, const char* request) {
     snprintf(full_path, sizeof(full_path), "html%s", file_path);
 
     struct stat path_stat;
-    struct HttpResponse response;
 
     if (stat(full_path, &path_stat) != 0) {
         response = get404Response(client_info->socket);
@@ -345,7 +343,7 @@ void sendHTTPResponse(struct ClientInfo* client_info, const struct HttpResponse*
             written = write(client_fd, full_response, response_length);
             if (written < 0) {
                 // Handle the error, for example:
-                perror("write");
+                perror("[Error] HTTP write");
                 // Additional error handling as needed
             }
 
@@ -371,7 +369,7 @@ void sendHTTPResponse(struct ClientInfo* client_info, const struct HttpResponse*
             written = write(client_fd, full_response, response_length);
             if (written < 0) {
                 // Handle the error, for example:
-                perror("write");
+                perror("[Error] HTTP write not301, first");
                 // Additional error handling as needed
             }
 
@@ -379,7 +377,7 @@ void sendHTTPResponse(struct ClientInfo* client_info, const struct HttpResponse*
             written = write(client_fd, response->Content, response->ContentLength);
             if (written < 0) {
                 // Handle the error, for example:
-                perror("write");
+                perror("[Error] HTTP write not301, second");
                 // Additional error handling as needed
             }
 

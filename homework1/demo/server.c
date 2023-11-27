@@ -3,6 +3,7 @@
 #define MAX_EVENTS 10
 
 struct ClientInfo *client_infos;
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 size_t client_capacity = INITIAL_CAPACITY;
 size_t num_clients = 0;
 
@@ -24,34 +25,9 @@ void handle_client(struct ClientInfo *client_info) {
     } else {
         // HTTP connection
         bytes_received = read(client_info->socket, request_buffer, sizeof(request_buffer));
-    }
-
-    if (bytes_received <= 0) {
-        int error;
-        if (ssl) {
-            // HTTPS connection
-            error = SSL_get_error(ssl, bytes_received);
-        } else {
-            // HTTP connection
-            error = errno;
+        if (bytes_received == -1) {
+            perror("HTTP read");
         }
-
-        if (error == SSL_ERROR_ZERO_RETURN || error == SSL_ERROR_SYSCALL) {
-            // Connection closed or error, handle accordingly
-        } else {
-            // Handle other errors
-            if (ssl) {
-                ERR_print_errors_fp(stderr);
-            } else {
-                perror("read");
-            }
-        }
-
-        if (ssl) {
-            cleanup_ssl(client_info);
-        }
-        close(client_info->socket);
-        return;
     }
 
     // Process the received data
@@ -69,8 +45,12 @@ void handle_client(struct ClientInfo *client_info) {
         cleanup_ssl(client_info);
     }
 
-    // Your existing code for closing the socket
-    close(client_info->socket);
+    // Error message for close operation
+    if (close(client_info->socket) == -1) {
+        perror("[Error] closing socket");
+    }
+    // free(client_info);
+    return;
 }
 
 int main() {
@@ -134,10 +114,9 @@ int main() {
                 // Accept new HTTP connections and create threads
                 int client_fd = accept(http_server_fd, NULL, NULL);
                 if (client_fd < 0) {
-                    perror("accept");
+                    perror("[Error] http accept");
                     continue;
                 }
-
                 if (num_clients >= client_capacity) {
                     // Resize the array if needed
                     client_capacity *= 2;
@@ -156,7 +135,7 @@ int main() {
                 // Accept new HTTPS connections and create threads
                 int client_fd = accept(https_server_fd, NULL, NULL);
                 if (client_fd < 0) {
-                    perror("accept");
+                    perror("[Error] https accept");
                     continue;
                 }
 
