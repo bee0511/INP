@@ -60,4 +60,7 @@ struct HttpResponse get501Response(int client_fd);
 void sendHTTPResponse(struct ClientInfo* client_info, const struct HttpResponse* response);
 void handleHTTPRequest(struct ClientInfo*, const char* request);
 
+void sendHTTPSResponse(struct ClientInfo* client_info, const struct HttpResponse* response);
+void handleHTTPSRequest(struct ClientInfo*, const char* request);
+
 #endif
