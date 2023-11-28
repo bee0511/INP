@@ -13,7 +13,7 @@
         perror(m);  \
         exit(-1);   \
     }
-#define PACKET_SIZE 1024
+#define PACKET_SIZE 2048
 #define PORT 12345
 
 #ifndef HEADER_H
