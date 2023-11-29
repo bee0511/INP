@@ -5,7 +5,7 @@ void send_ack(int sock, struct sockaddr_in* client_addr, uint32_t file_number, u
     ack_packet.packet_number = packet_number;  // Acknowledge the specified file number
     ack_packet.file_number = file_number;
     sendto(sock, &ack_packet, sizeof(struct Packet), 0, (struct sockaddr*)client_addr, sizeof(struct sockaddr_in));
-    printf("[Server] Require for file %d's packet %d\n", ack_packet.file_number, ack_packet.packet_number);
+    // printf("[Server] Require for file %d's packet %d\n", ack_packet.file_number, ack_packet.packet_number);
 }
 
 void store_file(const char* folder_path, const struct Packet* packet) {
@@ -14,7 +14,7 @@ void store_file(const char* folder_path, const struct Packet* packet) {
 
     FILE* file = fopen(filename, "ab");  // Open the file in append mode
     if (file == NULL) {
-        perror("[Server] fopen");
+        perror("fopen");
         exit(-1);
     }
 
@@ -34,12 +34,12 @@ int main(int argc, char* argv[]) {
         sprintf(filename, "%s/%06d", argv[1], i);
         remove(filename);
     }
+
     char* store_files_path = argv[1];
     int total_files = atoi(argv[2]);
     // int server_port = atoi(argv[3]);
 
-    int s;
-    std::vector<int> seq_nums(1000, 0);
+    int s, seq_num = 0, file_num = 0;
     struct sockaddr_in sin;
 
     setvbuf(stdin, NULL, _IONBF, 0);
@@ -75,19 +75,19 @@ int main(int argc, char* argv[]) {
             printf("[Server] Cal checksum: %d, packet checksum: %d\n", calculated_checksum, packet.checksum);
             continue;
         }
-        if (packet.packet_number == seq_nums[packet.file_number]) {
+        if (packet.packet_number == seq_num && packet.file_number == file_num) {
             store_file(argv[1], &packet);
-            seq_nums[packet.file_number]++;
-            if (seq_nums[packet.file_number] >= packet.total_packets) {
-                seq_nums[packet.file_number] = 0;
-                send_ack(s, &client_addr, packet.file_number + 1, seq_nums[packet.file_number]);
-            } else {
-                send_ack(s, &client_addr, packet.file_number, seq_nums[packet.file_number]);
+            seq_num++;
+            if (seq_num == packet.total_packets) {
+                seq_num = 0;
+                file_num++;
+                printf("[Server] Reset seq_num, file_num change to %d\n", file_num);
             }
+            send_ack(s, &client_addr, file_num, seq_num);
         } else {
-            printf("[Server] Received out-of-order packet or duplicate for file %d's packet %d\n", packet.file_number, packet.packet_number);
-            // for (int i = 0; i < RETRY; i++)
-            send_ack(s, &client_addr, packet.file_number, seq_nums[packet.file_number]);
+            // printf("[Server] Received out-of-order packet or duplicate for file %d's packet %d\n", packet.file_number, packet.packet_number);
+            for (int i = 0; i < RETRY; i++)
+                send_ack(s, &client_addr, file_num, seq_num);
         }
     }
 

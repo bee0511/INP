@@ -17,11 +17,11 @@
         perror(m);  \
         exit(-1);   \
     }
-#define PACKET_SIZE 2048
+#define PACKET_SIZE 512
 #define PORT 12345
 // #define DEBUG 1
-#define WIN_SIZE 8
-#define RETRY 5
+#define WIN_SIZE 32
+#define RETRY 1
 
 #ifndef HEADER_H
 #define HEADER_H

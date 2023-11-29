@@ -84,7 +84,7 @@ int main(int argc, char* argv[]) {
             packet.checksum = calculateCRC(&packet, offsetof(struct Packet, checksum), 0xFFFF);
             packet.checksum = calculateCRC((uint8_t*)&packet.data, sizeof(packet.data), packet.checksum);
             send_packet(sock, &sin, &packet);
-            printf("[Client] Send file %d's packet %d\n", tmp_file_number, tmp_seq_num);
+            // printf("[Client] Send file %d's packet %d\n", tmp_file_number, tmp_seq_num);
 
             tmp_seq_num++;
             if (tmp_seq_num >= packet.total_packets) {
@@ -102,10 +102,10 @@ int main(int argc, char* argv[]) {
             seq_num = ack_packet.packet_number;
             file_number = ack_packet.file_number;
         }
-        printf("[Client] File %d's total packets: %d\n", file_number, packet.total_packets);
+        // printf("[Client] File %d's total packets: %d\n", file_number, packet.total_packets);
         // printf("[Client] Send file %d's packet %d, window size %d\n", file_number, seq_num, WIN_SIZE);
 #ifdef DEBUG
-        if (file_number > 0) break;
+        if (file_number == 10) break;
 #endif
     }
 
