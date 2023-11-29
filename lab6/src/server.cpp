@@ -14,7 +14,7 @@ void store_file(const char* folder_path, const struct Packet* packet) {
 
     FILE* file = fopen(filename, "ab");  // Open the file in append mode
     if (file == NULL) {
-        perror("fopen");
+        perror("[Server] fopen");
         exit(-1);
     }
 
@@ -34,12 +34,12 @@ int main(int argc, char* argv[]) {
         sprintf(filename, "%s/%06d", argv[1], i);
         remove(filename);
     }
-
     char* store_files_path = argv[1];
     int total_files = atoi(argv[2]);
     // int server_port = atoi(argv[3]);
 
-    int s, seq_num = 0, file_num = 0;
+    int s;
+    std::vector<int> seq_nums(1000, 0);
     struct sockaddr_in sin;
 
     setvbuf(stdin, NULL, _IONBF, 0);
@@ -75,19 +75,19 @@ int main(int argc, char* argv[]) {
             printf("[Server] Cal checksum: %d, packet checksum: %d\n", calculated_checksum, packet.checksum);
             continue;
         }
-        if (packet.packet_number == seq_num && packet.file_number == file_num) {
+        if (packet.packet_number == seq_nums[packet.file_number]) {
             store_file(argv[1], &packet);
-            seq_num++;
-            if (seq_num == packet.total_packets) {
-                seq_num = 0;
-                file_num++;
-                printf("[Server] Reset seq_num, file_num change to %d\n", file_num);
+            seq_nums[packet.file_number]++;
+            if (seq_nums[packet.file_number] >= packet.total_packets) {
+                seq_nums[packet.file_number] = 0;
+                send_ack(s, &client_addr, packet.file_number + 1, seq_nums[packet.file_number]);
+            } else {
+                send_ack(s, &client_addr, packet.file_number, seq_nums[packet.file_number]);
             }
-            send_ack(s, &client_addr, file_num, seq_num);
         } else {
             printf("[Server] Received out-of-order packet or duplicate for file %d's packet %d\n", packet.file_number, packet.packet_number);
-            for (int i = 0; i < RETRY; i++)
-                send_ack(s, &client_addr, file_num, seq_num);
+            // for (int i = 0; i < RETRY; i++)
+            send_ack(s, &client_addr, packet.file_number, seq_nums[packet.file_number]);
         }
     }
 

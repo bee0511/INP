@@ -10,6 +10,7 @@
 
 #include <fstream>
 #include <iostream>
+#include <vector>
 
 #define err_quit(m) \
     {               \
@@ -19,7 +20,7 @@
 #define PACKET_SIZE 2048
 #define PORT 12345
 // #define DEBUG 1
-#define WIN_SIZE 16
+#define WIN_SIZE 8
 #define RETRY 5
 
 #ifndef HEADER_H

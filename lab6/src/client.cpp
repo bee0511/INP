@@ -50,29 +50,30 @@ int main(int argc, char* argv[]) {
     uint32_t seq_num = 0;
 
     while (file_number < total_files) {
-        // Construct the filename
-        char filename[20];
-        sprintf(filename, "/files/%06d", file_number);
-        FILE* file = fopen(filename, "rb");
-
-        if (file == NULL) {
-            perror("Error opening file");
-            exit(EXIT_FAILURE);
-        }
-
-        // Determine file size
-        fseek(file, 0, SEEK_END);
-        long file_size = ftell(file);
-        fseek(file, 0, SEEK_SET);
-
         // Initialize packet
         struct Packet packet;
-        packet.file_number = file_number;
-        packet.total_packets = (file_size / PACKET_SIZE) + 1;
+
         int tmp_seq_num = seq_num;
         int tmp_file_number = file_number;
         int counter = 0;
-        while (tmp_seq_num < packet.total_packets && (tmp_seq_num - seq_num) < WIN_SIZE) {
+        while (counter < WIN_SIZE) {
+            // Construct the filename
+            char filename[20];
+            sprintf(filename, "/files/%06d", tmp_file_number);
+            FILE* file = fopen(filename, "rb");
+
+            if (file == NULL) {
+                perror("[Client] Error opening file");
+                exit(EXIT_FAILURE);
+            }
+
+            // Determine file size
+            fseek(file, 0, SEEK_END);
+            long file_size = ftell(file);
+            fseek(file, 0, SEEK_SET);
+
+            packet.file_number = tmp_file_number;
+            packet.total_packets = (file_size / PACKET_SIZE) + 1;
             if (fseek(file, tmp_seq_num * PACKET_SIZE, SEEK_SET) != 0) {
                 perror("[Client] fseek");
                 exit(EXIT_FAILURE);
@@ -83,9 +84,15 @@ int main(int argc, char* argv[]) {
             packet.checksum = calculateCRC(&packet, offsetof(struct Packet, checksum), 0xFFFF);
             packet.checksum = calculateCRC((uint8_t*)&packet.data, sizeof(packet.data), packet.checksum);
             send_packet(sock, &sin, &packet);
-            // printf("[Client] Send file %d's packet %d\n", file_number, tmp_seq_num);
+            printf("[Client] Send file %d's packet %d\n", tmp_file_number, tmp_seq_num);
 
             tmp_seq_num++;
+            if (tmp_seq_num >= packet.total_packets) {
+                tmp_seq_num = 0;
+                tmp_file_number++;
+            }
+            fclose(file);
+            counter++;
         }
 
         Ack ack_packet = getAck(sock, &sin);
@@ -95,9 +102,8 @@ int main(int argc, char* argv[]) {
             seq_num = ack_packet.packet_number;
             file_number = ack_packet.file_number;
         }
-        // printf("[Client] file %d total packet: %d\n", file_number, packet.total_packets);
-        printf("[Client] Send file %d's packet %d, window size %d\n", file_number, seq_num, WIN_SIZE);
-        fclose(file);
+        printf("[Client] File %d's total packets: %d\n", file_number, packet.total_packets);
+        // printf("[Client] Send file %d's packet %d, window size %d\n", file_number, seq_num, WIN_SIZE);
 #ifdef DEBUG
         if (file_number > 0) break;
 #endif
