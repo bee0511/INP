@@ -86,7 +86,8 @@ int main(int argc, char* argv[]) {
             send_ack(s, &client_addr, file_num, seq_num);
         } else {
             printf("[Server] Received out-of-order packet or duplicate for file %d's packet %d\n", packet.file_number, packet.packet_number);
-            send_ack(s, &client_addr, file_num, seq_num);  // Acknowledge the duplicate packet
+            for (int i = 0; i < RETRY; i++)
+                send_ack(s, &client_addr, file_num, seq_num);
         }
     }
 

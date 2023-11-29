@@ -18,7 +18,9 @@
     }
 #define PACKET_SIZE 2048
 #define PORT 12345
-#define DEBUG 1
+// #define DEBUG 1
+#define WIN_SIZE 16
+#define RETRY 5
 
 #ifndef HEADER_H
 #define HEADER_H

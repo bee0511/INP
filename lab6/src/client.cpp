@@ -63,27 +63,31 @@ int main(int argc, char* argv[]) {
         // Determine file size
         fseek(file, 0, SEEK_END);
         long file_size = ftell(file);
-#ifdef FILESIZE
-        printf("[Client] File size: %ld\n", file_size);
-#endif
         fseek(file, 0, SEEK_SET);
 
         // Initialize packet
         struct Packet packet;
         packet.file_number = file_number;
         packet.total_packets = (file_size / PACKET_SIZE) + 1;
+        int tmp_seq_num = seq_num;
+        int tmp_file_number = file_number;
+        int counter = 0;
+        while (tmp_seq_num < packet.total_packets && (tmp_seq_num - seq_num) < WIN_SIZE) {
+            if (fseek(file, tmp_seq_num * PACKET_SIZE, SEEK_SET) != 0) {
+                perror("[Client] fseek");
+                exit(EXIT_FAILURE);
+            }
+            size_t read_size = fread(packet.data, 1, PACKET_SIZE, file);
+            packet.length = read_size;
+            packet.packet_number = tmp_seq_num;
+            packet.checksum = calculateCRC(&packet, offsetof(struct Packet, checksum), 0xFFFF);
+            packet.checksum = calculateCRC((uint8_t*)&packet.data, sizeof(packet.data), packet.checksum);
+            send_packet(sock, &sin, &packet);
+            // printf("[Client] Send file %d's packet %d\n", file_number, tmp_seq_num);
 
-        if (fseek(file, seq_num * PACKET_SIZE, SEEK_SET) != 0) {
-            perror("[Client] fseek");
-            exit(EXIT_FAILURE);
+            tmp_seq_num++;
         }
-        size_t read_size = fread(packet.data, 1, PACKET_SIZE, file);
-        packet.length = read_size;
-        packet.packet_number = seq_num;
-        packet.checksum = calculateCRC(&packet, offsetof(struct Packet, checksum), 0xFFFF);
-        packet.checksum = calculateCRC((uint8_t*)&packet.data, sizeof(packet.data), packet.checksum);
-        send_packet(sock, &sin, &packet);
-        printf("[Client] Send file %d's packet %d\n", file_number, seq_num);
+
         Ack ack_packet = getAck(sock, &sin);
         if (ack_packet.packet_number == -1) {
             printf("[Client] No Ack\n");
@@ -91,8 +95,8 @@ int main(int argc, char* argv[]) {
             seq_num = ack_packet.packet_number;
             file_number = ack_packet.file_number;
         }
-        printf("[Client] file %d total packet: %d\n", file_number, packet.total_packets);
-
+        // printf("[Client] file %d total packet: %d\n", file_number, packet.total_packets);
+        printf("[Client] Send file %d's packet %d, window size %d\n", file_number, seq_num, WIN_SIZE);
         fclose(file);
 #ifdef DEBUG
         if (file_number > 0) break;
