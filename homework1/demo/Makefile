@@ -1,6 +1,6 @@
 
 CC		= gcc
-PROGS	= server server_https
+PROGS	= server
 
 all: server https
 
@@ -10,8 +10,8 @@ all: server https
 server: server.o
 	gcc -o server -O3 -flto -static server.c utils.c -lpthread
 
-https: server_https.o
-	gcc -o server_https -O3 -flto -static server_https.c utils_https.c -lpthread -lssl -lcrypto
+https: server.o
+	gcc -o server -O3 -flto -static server_https.c utils_https.c -lpthread -lssl -lcrypto
 
 clean:
 	rm -f *.o $(PROGS)
