@@ -1,16 +1,5 @@
 #include "header.hpp"
 
-uint16_t calculateChecksum(const void* data, size_t length) {
-    const uint8_t* bytes = (const uint8_t*)data;
-    uint16_t checksum = 0;
-
-    for (size_t i = 0; i < length; ++i) {
-        checksum += bytes[i];
-    }
-
-    return checksum;
-}
-
 void send_ack(int sock, struct sockaddr_in* client_addr, uint32_t file_number, uint32_t packet_number) {
     struct Packet ack_packet;
     ack_packet.packet_number = packet_number;  // Acknowledge the specified file number
@@ -29,8 +18,8 @@ void store_file(const char* folder_path, const struct Packet* packet) {
         exit(-1);
     }
 
-    fwrite(packet->data, 1, strlen(packet->data), file);
-    // printf("store %d %d\n", packet->file_number, packet->packet_number);
+    fwrite(packet->data, 1, packet->length, file);
+    printf("[Server] Store file %d's packet %d\n", packet->file_number, packet->packet_number);
     fclose(file);
 }
 
@@ -64,7 +53,6 @@ int main(int argc, char* argv[]) {
     if ((s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) < 0) err_quit("socket");
 
     if (bind(s, (struct sockaddr*)&sin, sizeof(sin)) < 0) err_quit("bind");
-
     while (1) {
         struct sockaddr_in client_addr;
         socklen_t client_addr_len = sizeof(client_addr);
@@ -80,14 +68,15 @@ int main(int argc, char* argv[]) {
             exit(EXIT_FAILURE);
         }
 
-        uint16_t calculated_checksum = calculateChecksum(&packet, offsetof(struct Packet, checksum)) + calculateChecksum((uint8_t*)&packet.data, sizeof(packet.data));
+        uint16_t calculated_checksum = calculateCRC(&packet, offsetof(struct Packet, checksum), 0xFFFF);
+        calculated_checksum = calculateCRC((uint8_t*)&packet.data, sizeof(packet.data), calculated_checksum);
         if (packet.checksum != calculated_checksum) {
             printf("[Server] Checksum verification failed\n");
+            printf("[Server] Cal checksum: %d, packet checksum: %d\n", calculated_checksum, packet.checksum);
             continue;
         }
         if (packet.packet_number == seq_num && packet.file_number == file_num) {
             store_file(argv[1], &packet);
-            printf("[Server] Store file %d's packet %d\n", packet.file_number, packet.packet_number);
             seq_num++;
             if (seq_num == packet.total_packets) {
                 seq_num = 0;

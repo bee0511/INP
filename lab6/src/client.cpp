@@ -1,22 +1,11 @@
 #include "header.hpp"
 
-uint16_t calculateChecksum(const void* data, size_t length) {
-    const uint8_t* bytes = (const uint8_t*)data;
-    uint16_t checksum = 0;
-
-    for (size_t i = 0; i < length; ++i) {
-        checksum += bytes[i];
-    }
-
-    return checksum;
-}
-
 void send_packet(int sock, struct sockaddr_in* server_addr, struct Packet* packet) {
     sendto(sock, packet, sizeof(struct Packet), 0, (struct sockaddr*)server_addr, sizeof(struct sockaddr_in));
 }
 
-struct Packet getAck(int sock, struct sockaddr_in* server_addr) {
-    struct Packet ack_packet;
+struct Ack getAck(int sock, struct sockaddr_in* server_addr) {
+    struct Ack ack_packet;
     ack_packet.packet_number = -1;
     ssize_t recv_size;
 
@@ -28,7 +17,7 @@ struct Packet getAck(int sock, struct sockaddr_in* server_addr) {
 
     // Wait for an ACK
     socklen_t server_addr_len = sizeof(struct sockaddr_in);
-    recv_size = recvfrom(sock, &ack_packet, sizeof(struct Packet), 0, (struct sockaddr*)server_addr, &server_addr_len);  // Corrected line
+    recv_size = recvfrom(sock, &ack_packet, sizeof(struct Ack), 0, (struct sockaddr*)server_addr, &server_addr_len);  // Corrected line
 
     return ack_packet;
 }
@@ -74,6 +63,9 @@ int main(int argc, char* argv[]) {
         // Determine file size
         fseek(file, 0, SEEK_END);
         long file_size = ftell(file);
+#ifdef FILESIZE
+        printf("[Client] File size: %ld\n", file_size);
+#endif
         fseek(file, 0, SEEK_SET);
 
         // Initialize packet
@@ -86,12 +78,13 @@ int main(int argc, char* argv[]) {
             exit(EXIT_FAILURE);
         }
         size_t read_size = fread(packet.data, 1, PACKET_SIZE, file);
+        packet.length = read_size;
         packet.packet_number = seq_num;
-        packet.checksum = calculateChecksum(&packet, offsetof(struct Packet, checksum));
-        packet.checksum += calculateChecksum((uint8_t*)&packet.data, sizeof(packet.data));
+        packet.checksum = calculateCRC(&packet, offsetof(struct Packet, checksum), 0xFFFF);
+        packet.checksum = calculateCRC((uint8_t*)&packet.data, sizeof(packet.data), packet.checksum);
         send_packet(sock, &sin, &packet);
         printf("[Client] Send file %d's packet %d\n", file_number, seq_num);
-        Packet ack_packet = getAck(sock, &sin);
+        Ack ack_packet = getAck(sock, &sin);
         if (ack_packet.packet_number == -1) {
             printf("[Client] No Ack\n");
         } else {
@@ -101,6 +94,9 @@ int main(int argc, char* argv[]) {
         printf("[Client] file %d total packet: %d\n", file_number, packet.total_packets);
 
         fclose(file);
+#ifdef DEBUG
+        if (file_number > 0) break;
+#endif
     }
 
     close(sock);
