@@ -30,8 +30,8 @@
         exit(-1);  \
     }
 
-#ifndef HEADER_H_
-#define HEADER_H_
+#ifndef HEADER_HTTPS_
+#define HEADER_HTTPS_
 
 struct HttpResponse {
     int StatusCode;
@@ -59,8 +59,5 @@ struct HttpResponse get501Response(int client_fd);
 
 void sendHTTPResponse(struct ClientInfo* client_info, const struct HttpResponse* response);
 void handleHTTPRequest(struct ClientInfo*, const char* request);
-
-void sendHTTPSResponse(struct ClientInfo* client_info, const struct HttpResponse* response);
-void handleHTTPSRequest(struct ClientInfo*, const char* request);
 
 #endif

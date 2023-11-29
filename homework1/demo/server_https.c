@@ -1,5 +1,9 @@
 #include "header_https.h"
 
+pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+size_t client_capacity = INITIAL_CAPACITY;
+size_t num_clients = 0;
+
 int main() {
     SSL_library_init();
     SSL_load_error_strings();
@@ -113,7 +117,7 @@ int main() {
                 // Process the received data
                 char decoded_buffer[BUFFER_SIZE];
                 urlDecode(request_buffer, decoded_buffer);
-                handleHTTPSRequest(&client_info, decoded_buffer);
+                handleHTTPRequest(&client_info, decoded_buffer);
 
                 // Graceful shutdown
                 if (SSL_shutdown(ssl_connection) == 0) {
