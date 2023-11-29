@@ -10,7 +10,7 @@ normal = '\x1b[m'
 def getargs(module, argv, opt):
     nopt = len(opt)
     optstr = ' '.join(opt)
-    scheme = "https" 
+    scheme = "http" 
     if len(argv) < len(opt)+1:
         print(f'usage: {module} {optstr} [scheme]')
         sys.exit(-1)
