@@ -57,6 +57,7 @@ int main(int argc, char* argv[]) {
         int tmp_file_number = file_number;
         int counter = 0;
         while (counter < WIN_SIZE) {
+            if (tmp_file_number > 999) continue;
             // Construct the filename
             char filename[20];
             sprintf(filename, "/files/%06d", tmp_file_number);
@@ -93,20 +94,23 @@ int main(int argc, char* argv[]) {
             }
             fclose(file);
             counter++;
+            // usleep(1000);
         }
 
         Ack ack_packet = getAck(sock, &sin);
         if (ack_packet.packet_number == -1) {
-            printf("[Client] No Ack\n");
+            // printf("[Client] No Ack, new window size: %d\n", WIN_SIZE);
         } else {
             seq_num = ack_packet.packet_number;
             file_number = ack_packet.file_number;
+            // printf("[Client] Got Ack, new window size: %d\n", WIN_SIZE);
         }
         // printf("[Client] File %d's total packets: %d\n", file_number, packet.total_packets);
         // printf("[Client] Send file %d's packet %d, window size %d\n", file_number, seq_num, WIN_SIZE);
 #ifdef DEBUG
-        if (file_number == 10) break;
+        if (file_number >= 30) break;
 #endif
+        if (file_number >= 999) break;
     }
 
     close(sock);

@@ -3,4 +3,4 @@ set -ex
 
 ./compile.sh
 
-python submit.py ./bin/server ./bin/client 
+TOKEN=ffRop5Nq7E6gpbo3 python submit.py ./bin/server ./bin/client 

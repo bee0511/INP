@@ -10,6 +10,9 @@ void urlDecode(const char* url, char* decoded) {
             int value = (int)strtol(hex, NULL, 16);
             decoded[decoded_pos++] = (char)value;
             i += 2;
+        } else if (url[i] == '+') {
+            // Replace '+' with space
+            decoded[decoded_pos++] = ' ';
         } else {
             decoded[decoded_pos++] = url[i];
         }
@@ -17,6 +20,7 @@ void urlDecode(const char* url, char* decoded) {
     // Null-terminate the decoded string
     decoded[decoded_pos] = '\0';
 }
+
 char* extractFilePath(const char* path) {
     const char* question_mark = strchr(path, '?');
     size_t path_length = question_mark ? (size_t)(question_mark - path) : strlen(path);

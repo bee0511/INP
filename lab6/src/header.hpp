@@ -17,26 +17,28 @@
         perror(m);  \
         exit(-1);   \
     }
-#define PACKET_SIZE 512
-#define PORT 12345
+#define PACKET_SIZE 1024
 // #define DEBUG 1
-#define WIN_SIZE 32
+// uint16_t WIN_SIZE = 64;
+#define WIN_SIZE 256
+#define TIMEOUT 5000  // usecond
+#define MAX_WIN_SIZE 128
 #define RETRY 1
 
 #ifndef HEADER_H
 #define HEADER_H
 struct Packet {
-    uint32_t file_number;
-    uint32_t packet_number;
-    uint32_t total_packets;
+    uint16_t file_number;
+    uint16_t packet_number;
+    uint16_t total_packets;
     uint16_t checksum;
     uint16_t length;
     char data[PACKET_SIZE];
 };
 
 struct Ack {
-    uint32_t file_number;
-    uint32_t packet_number;
+    uint16_t file_number;
+    uint16_t packet_number;
 };
 
 uint16_t calculateCRC(const void* data, size_t length, uint16_t initial_crc) {
