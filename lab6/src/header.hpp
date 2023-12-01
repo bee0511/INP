@@ -17,13 +17,23 @@
         perror(m);  \
         exit(-1);   \
     }
-#define PACKET_SIZE 1024
-// #define DEBUG 1
-// uint16_t WIN_SIZE = 64;
-#define WIN_SIZE 256
-#define TIMEOUT 5000  // usecond
-#define MAX_WIN_SIZE 128
-#define RETRY 1
+
+// Used to define the special file number
+#define INIT 10000
+#define NO_ACK 65535
+#define ACK_ERROR 20000
+#define FINISH 30000
+
+#define PACKET_SIZE 900        // each packet size
+#define INITIAL_WIN_SIZE 900  // How many files can the server ask for in the same time
+#define TIMEOUT 500 * 1000     // usecond
+#define INIT_RETRY 5           // How many times the server will send the init ack
+#define MAX_PACKETS 48         // Used to set the size of the stored_packet vector in Ack struct
+// #define ENABLE_ACK_CKSUM 1     // Whether to enable checksum
+
+#define DUMPINIT 1  // dump the init ack info
+// #define DUMPSRV 1   // dump the server info
+// #define DUMPCLI 1   // dump the client info
 
 #ifndef HEADER_H
 #define HEADER_H
@@ -38,7 +48,10 @@ struct Packet {
 
 struct Ack {
     uint16_t file_number;
-    uint16_t packet_number;
+    bool stored_packet[MAX_PACKETS];
+#ifdef ENABLE_ACK_CKSUM
+    uint16_t checksum;
+#endif
 };
 
 uint16_t calculateCRC(const void* data, size_t length, uint16_t initial_crc) {
