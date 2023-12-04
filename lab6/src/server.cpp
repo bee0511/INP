@@ -20,7 +20,6 @@ void send_ack(int sock, struct sockaddr_in* client_addr, struct Ack& ack_packet)
         printf("[Server] Sending FINISH ACK\n");
         return;
     }
-    if (ack_packet.file_number == INIT) return;
 #ifdef DUMPSRV
     // print the ack packet's file number
     printf("[Server] Send ack file %d\n", ack_packet.file_number);
@@ -53,31 +52,6 @@ void store_file(const char* folder_path, std::vector<std::string> data, uint16_t
     printf("[Server] Store file %d\n", file_num);
 }
 
-void init_recv(int sock, struct sockaddr_in* client_addr, socklen_t client_addr_len) {
-    struct Packet packet;
-
-    ssize_t bytes_received = -1;
-    // Check whether the packet has received, if not, receive again
-    while (bytes_received < 0) {
-#ifdef DUMPINIT
-        printf("[Server] Receiving init packet...\n");
-#endif
-        bytes_received = recvfrom(sock, &packet, sizeof(struct Packet), 0, (struct sockaddr*)client_addr, &client_addr_len);
-    }
-    // Receive the init packet, send the ack packet back
-    printf("[Server] Received init packet\n");
-    struct Ack ack_packet;
-    ack_packet.file_number = INIT;
-    // Initialize the stored_packet vector
-    for (int i = 0; i < MAX_PACKETS; i++) {
-        ack_packet.stored_packet[i] = false;
-    }
-    for (int i = 0; i < INIT_RETRY; i++)
-        send_ack(sock, client_addr, ack_packet);
-    printf("[Server] Finish init\n");
-    return;
-}
-
 int main(int argc, char* argv[]) {
     if (argc != 4) {
         fprintf(stderr, "usage: %s <path-to-store-files> <total-number-of-files> <port>\n", argv[0]);
@@ -89,10 +63,6 @@ int main(int argc, char* argv[]) {
         sprintf(filename, "%s/%06d", argv[1], i);
         remove(filename);
     }
-
-    char* store_files_path = argv[1];
-    int total_files = atoi(argv[2]);
-    // int server_port = atoi(argv[3]);
 
     int s, seq_num = 0, file_num = 0;
     struct sockaddr_in sin;
@@ -111,7 +81,7 @@ int main(int argc, char* argv[]) {
 
     struct timeval timeout;
     timeout.tv_sec = 0;  // second
-    timeout.tv_usec = TIMEOUT;
+    timeout.tv_usec = SRV_TIMEOUT;
     if (setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) perror("setsockopt");
 
     struct sockaddr_in client_addr;
@@ -120,62 +90,12 @@ int main(int argc, char* argv[]) {
     int start_file = 0;
     int end_file = start_file + INITIAL_WIN_SIZE;
 
-    init_recv(s, &client_addr, client_addr_len);
-
     while (1) {
-        // Set the start_file and end_file
-        for (int i = start_file; i <= 1000; i++) {
-            if (file_saved[i] == false) {
-                start_file = i;
-                end_file = i + INITIAL_WIN_SIZE;
-                if (end_file >= 1000) end_file = 1000;
-                break;
-            }
-        }
-        if (start_file == end_file) {
-            printf("[Server] All files have been saved\n");
-            struct Ack ack_packet;
-
-            ack_packet.file_number = FINISH;
-            // Initialize the stored_packet vector
-            for (int i = 0; i < MAX_PACKETS; i++) {
-                ack_packet.stored_packet[i] = false;
-            }
-            while (true) {
-                send_ack(s, &client_addr, ack_packet);
-                usleep(1000);
-            }
-        }
-        // Require for the file
-        for (int i = start_file; i < end_file; i++) {
-            if (file_saved[i] == true) {
-#ifdef DUMPSRV
-                printf("[Server] File %d has already been saved\n", i);
-#endif
-                continue;
-            }
-            struct Ack ack_packet;
-            ack_packet.file_number = i;
-            for (int j = 0; j < MAX_PACKETS; j++) {
-                // Initial, all packets are not stored
-                if (stored_packet[i].empty() == true) {
-                    ack_packet.stored_packet[j] = false;
-                    continue;
-                }
-                ack_packet.stored_packet[j] = stored_packet[i][j];
-            }
-            send_ack(s, &client_addr, ack_packet);
-        }
-
         struct Packet packet;
         // Receive a packet
         ssize_t bytes_received = recvfrom(s, &packet, sizeof(struct Packet), 0, (struct sockaddr*)&client_addr, &client_addr_len);
         if (bytes_received < 0) {
             printf("[Server] Timeout\n");
-            continue;
-        }
-        if (packet.checksum == 0 && packet.file_number == INIT) {
-            printf("[Server] Cleaning init packet...\n");
             continue;
         }
         while (bytes_received > 0) {
@@ -234,6 +154,50 @@ int main(int argc, char* argv[]) {
 
             // Require for the file again
             bytes_received = recvfrom(s, &packet, sizeof(struct Packet), 0, (struct sockaddr*)&client_addr, &client_addr_len);
+        }
+
+        // Set the start_file and end_file
+        for (int i = start_file; i <= 1000; i++) {
+            if (file_saved[i] == false) {
+                start_file = i;
+                end_file = i + INITIAL_WIN_SIZE;
+                if (end_file >= 1000) end_file = 1000;
+                break;
+            }
+        }
+        if (start_file == end_file) {
+            printf("[Server] All files have been saved\n");
+            struct Ack ack_packet;
+
+            ack_packet.file_number = FINISH;
+            // Initialize the stored_packet vector
+            for (int i = 0; i < MAX_PACKETS; i++) {
+                ack_packet.stored_packet[i] = false;
+            }
+            while (true) {
+                send_ack(s, &client_addr, ack_packet);
+                usleep(10 * 1000);
+            }
+        }
+        // Require for the file
+        for (int i = start_file; i < end_file; i++) {
+            if (file_saved[i] == true) {
+#ifdef DUMPSRV
+                printf("[Server] File %d has already been saved\n", i);
+#endif
+                continue;
+            }
+            struct Ack ack_packet;
+            ack_packet.file_number = i;
+            for (int j = 0; j < MAX_PACKETS; j++) {
+                // Initial, all packets are not stored
+                if (stored_packet[i].empty() == true) {
+                    ack_packet.stored_packet[j] = false;
+                    continue;
+                }
+                ack_packet.stored_packet[j] = stored_packet[i][j];
+            }
+            send_ack(s, &client_addr, ack_packet);
         }
     }
 

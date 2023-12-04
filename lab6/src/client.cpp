@@ -9,12 +9,6 @@ bool send_packet(int sock, struct sockaddr_in* server_addr, struct Packet* packe
         printf("[Client] Warning: Not all data was sent. Only %ld out of %ld bytes were sent.\n", sent_size, sizeof(struct Packet));
         return false;
     }
-    if (packet->packet_number == INIT) {
-#ifdef DUMPINIT
-        printf("[Client] Send init packet\n");
-#endif
-        return true;
-    }
 #ifdef DUMPCLI
     printf("[Client] Send file %d's packet %d\n", packet->file_number, packet->packet_number);
 #endif
@@ -44,31 +38,60 @@ struct Ack getAck(int sock, struct sockaddr_in* server_addr) {
 #endif
     return ack_packet;
 }
-void init_send(int sock, struct sockaddr_in* server_addr) {
-    bool recv = false;
 
+void send_file(int sock, struct sockaddr_in sin, Ack ack_packet, int file_number) {
+    // Initialize packet
     struct Packet packet;
-    packet.file_number = INIT;
-    packet.packet_number = 0;
-    packet.total_packets = 0;
-    packet.checksum = 0;
-    packet.length = 0;
-    memset(packet.data, 0, sizeof(packet.data));
-    struct Ack ack_packet;
+    // Construct the filename
+    char filename[20];
+    sprintf(filename, "/files/%06d", file_number);
+    FILE* file = fopen(filename, "rb");
 
-    while (!recv) {
-        send_packet(sock, server_addr, &packet);
-        // If receive an ACK with file number = 10000, then the server is ready
-        ack_packet = getAck(sock, server_addr);
-        if (ack_packet.file_number == INIT) {
-            recv = true;
-#ifdef DUMPINIT
-            printf("[Client] Init Ack received\n");
-#endif
+    if (file == NULL) {
+        perror("[Client] Error opening file");
+        exit(EXIT_FAILURE);
+    }
+
+    // Determine file size
+    fseek(file, 0, SEEK_END);
+    long file_size = ftell(file);
+    fseek(file, 0, SEEK_SET);
+
+    packet.total_packets = (file_size / PACKET_SIZE) + 1;
+    packet.file_number = file_number;
+    for (int i = 0; i < packet.total_packets; i++) {
+        // The server has stored the packet, no need to send again
+        if (ack_packet.stored_packet[i] == true) {
+            continue;
         }
-#ifdef DUMPINIT
-        if (!recv) printf("[Client] No init Ack, send again\n");
+        if (fseek(file, i * PACKET_SIZE, SEEK_SET) != 0) {
+            perror("[Client] fseek");
+            exit(EXIT_FAILURE);
+        }
+        size_t read_size = fread(packet.data, 1, PACKET_SIZE, file);
+        packet.length = read_size;
+        packet.packet_number = i;
+        packet.checksum = calculateCRC(&packet, offsetof(struct Packet, checksum), 0xFFFF);
+        packet.checksum = calculateCRC((uint8_t*)&packet.data, sizeof(packet.data), packet.checksum);
+        // dump checksum and packet_number
+        // printf("[Client] Checksum: %d, Packet number: %d\n", packet.checksum, packet.packet_number);
+        send_packet(sock, &sin, &packet);
+#ifdef DUMPCLI
+        printf("[Client] Send file %d's packet %d\n", file_number, i);
 #endif
+    }
+    fclose(file);
+}
+
+void init_send(int sock, struct sockaddr_in* server_addr) {
+    struct Ack ack_packet;
+    ack_packet.stored_packet[MAX_PACKETS] = {false};
+
+    // Send the all 1000 files in the beginning
+    for (int i = 0; i < CLI_INIT_SEND; i++) {
+        ack_packet.file_number = i;
+        send_file(sock, *server_addr, ack_packet, i);
+        // usleep(100);
     }
 
     return;
@@ -102,82 +125,29 @@ int main(int argc, char* argv[]) {
 
     // Set a timeout for receiving an ACK
     struct timeval timeout;
-    timeout.tv_sec = 0;         // second
-    timeout.tv_usec = TIMEOUT;  // usecond
+    timeout.tv_sec = 0;             // second
+    timeout.tv_usec = CLI_TIMEOUT;  // usecond
     if (setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0) perror("setsockopt");
-
-    int file_number = 0;
-    bool end_of_file = false;
 
     init_send(sock, &sin);
 
-    while (!end_of_file) {
+    while (true) {
         Ack ack_packet = getAck(sock, &sin);
-        if (ack_packet.file_number == INIT) {
-            printf("[Client] Cleaning init ack...\n");
-            continue;
-        }
         if (ack_packet.file_number == NO_ACK) {
-            // WIN_SIZE = WIN_SIZE * 2;
-            // if (WIN_SIZE > MAX_WIN_SIZE) WIN_SIZE = MAX_WIN_SIZE;
             printf("[Client] No Ack\n");
             continue;
         }
+#ifdef ENABLE_ACK_CKSUM
         if (ack_packet.file_number == ACK_ERROR) {
             printf("[Client] Ack error\n");
             continue;
         }
+#endif
         if (ack_packet.file_number == FINISH) {
             printf("[Client] Finish\n");
             break;
         }
-        file_number = ack_packet.file_number;
-        if (file_number >= 1000) {
-            printf("[Client] File %d invalid", file_number);
-            continue;
-        }
-
-        // Initialize packet
-        struct Packet packet;
-        // Construct the filename
-        char filename[20];
-        sprintf(filename, "/files/%06d", file_number);
-        FILE* file = fopen(filename, "rb");
-
-        if (file == NULL) {
-            perror("[Client] Error opening file");
-            exit(EXIT_FAILURE);
-        }
-
-        // Determine file size
-        fseek(file, 0, SEEK_END);
-        long file_size = ftell(file);
-        fseek(file, 0, SEEK_SET);
-
-        packet.total_packets = (file_size / PACKET_SIZE) + 1;
-        packet.file_number = file_number;
-        for (int i = 0; i < packet.total_packets; i++) {
-            // The server has stored the packet, no need to send again
-            if (ack_packet.stored_packet[i] == true) {
-                continue;
-            }
-            if (fseek(file, i * PACKET_SIZE, SEEK_SET) != 0) {
-                perror("[Client] fseek");
-                exit(EXIT_FAILURE);
-            }
-            size_t read_size = fread(packet.data, 1, PACKET_SIZE, file);
-            packet.length = read_size;
-            packet.packet_number = i;
-            packet.checksum = calculateCRC(&packet, offsetof(struct Packet, checksum), 0xFFFF);
-            packet.checksum = calculateCRC((uint8_t*)&packet.data, sizeof(packet.data), packet.checksum);
-            // dump checksum and packet_number
-            // printf("[Client] Checksum: %d, Packet number: %d\n", packet.checksum, packet.packet_number);
-            send_packet(sock, &sin, &packet);
-#ifdef DUMPCLI
-            printf("[Client] Send file %d's packet %d\n", file_number, i);
-#endif
-        }
-        fclose(file);
+        send_file(sock, sin, ack_packet, ack_packet.file_number);
     }
 
     close(sock);

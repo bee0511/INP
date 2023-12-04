@@ -19,16 +19,18 @@
     }
 
 // Used to define the special file number
-#define INIT 10000
 #define NO_ACK 65535
 #define ACK_ERROR 20000
 #define FINISH 30000
 
-#define PACKET_SIZE 900        // each packet size
-#define INITIAL_WIN_SIZE 900  // How many files can the server ask for in the same time
-#define TIMEOUT 500 * 1000     // usecond
-#define INIT_RETRY 5           // How many times the server will send the init ack
-#define MAX_PACKETS 48         // Used to set the size of the stored_packet vector in Ack struct
+#define PACKET_SIZE 1200        // each packet size
+#define INITIAL_WIN_SIZE 1000   // How many files can the server ask for in the same time
+#define CLI_INIT_SEND 1000      // How many files can the client send in the beginning
+#define CLI_TIMEOUT 500 * 1000  // usecond, 500 * 1000 = 500ms
+#define SRV_TIMEOUT 500 * 1000  // usecond, 500 * 1000 = 500ms
+#define INIT_RETRY 5            // How many times the server will send the init ack
+#define MAX_PACKETS 48          // Used to set the size of the stored_packet vector in Ack struct
+#define NUM_THREADS 4           // How many threads will be created
 // #define ENABLE_ACK_CKSUM 1     // Whether to enable checksum
 
 #define DUMPINIT 1  // dump the init ack info
