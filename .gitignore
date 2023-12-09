@@ -1,6 +1,4 @@
 .data/
-docker-compose.yml
-Dockerfile
 .venv
 *.bin
 lab?/demo
