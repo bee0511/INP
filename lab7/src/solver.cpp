@@ -85,16 +85,17 @@ bool checkqueen(int x, int y, std::vector<std::string> table, int n) {
 }
 
 // read the string and solve the N-Queen puzzle recursively
-bool solveNQueen(std::vector<std::string>& table, std::vector<bool>& haverowQueen, std::vector<bool>& havecolQueen, int line) {
-    if (line == 30) {
+bool solveNQueen(std::vector<std::string>& table, std::vector<bool>& row_Queen, std::vector<bool>& col_Queen, int row) {
+    if (row == 30) {
         return true;
     }
 
-    if (haverowQueen[line] == true) {
-        return solveNQueen(table, haverowQueen, havecolQueen, line + 1);
+    if (row_Queen[row] == true) {
+        return solveNQueen(table, row_Queen, col_Queen, row + 1);
     }
-    for (int i = 0; i < MAX_N; i++) {
-        if (havecolQueen[i] == true) {
+
+    for (int col = 0; col < MAX_N; col++) {
+        if (col_Queen[col] == true) {
             continue;
         }
         count++;
@@ -102,26 +103,26 @@ bool solveNQueen(std::vector<std::string>& table, std::vector<bool>& haverowQuee
             fprintf(stderr, "Still solving...\n");
             count = 0;
         }
-        if (checkqueen(line, i, table, MAX_N)) {
+        if (checkqueen(row, col, table, MAX_N)) {
             // place the queen in the cell
-            haverowQueen[line] = true;
-            havecolQueen[i] = true;
-            table[line][i] = 'Q';
-            bool flg = solveNQueen(table, haverowQueen, havecolQueen, line + 1);
+            row_Queen[row] = true;
+            col_Queen[col] = true;
+            table[row][col] = 'Q';
+            bool flg = solveNQueen(table, row_Queen, col_Queen, row + 1);
             if (flg) return true;
-            haverowQueen[line] = false;
-            havecolQueen[i] = false;
-            table[line][i] = '.';
+            row_Queen[row] = false;
+            col_Queen[col] = false;
+            table[row][col] = '.';
         }
     }
+
     return false;
 }
 
-int main() {
+// Set the socket and connect to the server
+int init() {
     int sock;
     struct sockaddr_un server_addr;
-    char msg[MAX_MSG];
-    char* buf;
 
     // Create a UNIX domain socket
     sock = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -147,8 +148,17 @@ int main() {
         perror("connect");
         exit(EXIT_FAILURE);
     }
+
     // output a message via stdout or stderr
-    fprintf(stderr, "Hello, world!\n");
+    // fprintf(stderr, "Hello, world!\n");
+
+    return sock;
+}
+
+int main() {
+    int sock = init();
+    char* buf;
+
     // Send a command to the server
     sendMsg(sock, "P\n");
 
@@ -157,13 +167,10 @@ int main() {
     // Receive the response from the server
     recvMsg(sock, buf);
 
-    // eliminate spaces in buf
-    // use vector and string to save the elements in buf
-    // If we see the \n in the buf, then we push the string into the vector
-    // If we see the space in the buf, then we don't push the string into the vector
+    // Eliminate spaces in buf
     std::vector<std::string> str;
     std::string tmp;
-    int line = 0;
+    int row = 0;
     int col = 0;
     for (int i = 0; i < strlen(buf); i++) {
         if (buf[i] == '\n') {
@@ -175,14 +182,14 @@ int main() {
             tmp += buf[i];
         }
     }
-    std::vector<bool> haverowQueen(MAX_N, false);
-    std::vector<bool> havecolQueen(MAX_N, false);
+    std::vector<bool> row_Queen(MAX_N, false);
+    std::vector<bool> col_Queen(MAX_N, false);
     // check the row and column
-    for (int i = 0; i < str.size(); i++) {
-        for (int j = 0; j < str[i].size(); j++) {
-            if (str[i][j] == 'Q') {
-                haverowQueen[i] = true;
-                havecolQueen[j] = true;
+    for (int row = 0; row < str.size(); row++) {
+        for (int col = 0; col < str[row].size(); col++) {
+            if (str[row][col] == 'Q') {
+                row_Queen[row] = true;
+                col_Queen[col] = true;
             }
         }
     }
@@ -191,47 +198,32 @@ int main() {
     for (int i = 0; i < str.size(); i++) {
         fprintf(stderr, "%s\n", str[i].c_str());
     }
-#ifdef DEBUG
-    // print the haverowQueen to stderr
-    for (int i = 0; i < haverowQueen.size(); i++) {
-        if (haverowQueen[i]) {
-            fprintf(stderr, "row %d true\n", i);
-        }
-    }
 
-    // print the havecolQueen to stderr
-    for (int i = 0; i < havecolQueen.size(); i++) {
-        if (havecolQueen[i]) {
-            fprintf(stderr, "col %d true\n", i);
-        }
-    }
-#endif
     // solve the N-Queen puzzle
-    solveNQueen(str, haverowQueen, havecolQueen, 0);
+    solveNQueen(str, row_Queen, col_Queen, 0);
 
     // print the string to stderr
     fprintf(stderr, "After solving: \n");
     for (int i = 0; i < str.size(); i++) {
         fprintf(stderr, "%s\n", str[i].c_str());
     }
+
     // If the table contain Q, send the Q to the server
-    for (int i = 0; i < str.size(); i++) {
-        for (int j = 0; j < str[i].size(); j++) {
-            if (str[i][j] == 'Q') {
+    for (int row = 0; row < str.size(); row++) {
+        for (int col = 0; col < str[row].size(); col++) {
+            if (str[row][col] == 'Q') {
                 // send the M command to the server
-                char tmp[100];
-                sprintf(tmp, "M %d %d\n", i, j);
-                sendMsg(sock, tmp);
+                sprintf(buf, "M %d %d\n", row, col);
+                sendMsg(sock, buf);
                 // receive the response from the server
                 recvMsg(sock, buf);
             }
         }
     }
 
-    /// send the C command to the server
+    // send the C command to the server
     sendMsg(sock, "C\n");
     recvMsg(sock, buf);
 
-    // sleep(100);
     return 0;
 }
