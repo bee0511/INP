@@ -5,15 +5,20 @@
 #include <linux/if.h>
 #include <linux/if_tun.h>
 #include <netdb.h>
+#include <netinet/icmp6.h>
 #include <netinet/in.h>
 #include <netinet/ip.h>
+#include <netinet/ip_icmp.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/epoll.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
+#include <cstring>
+#include <iostream>
 #include <vector>
 
 #define NIPQUAD(m) ((unsigned char *)&(m))[0], ((unsigned char *)&(m))[1], ((unsigned char *)&(m))[2], ((unsigned char *)&(m))[3]

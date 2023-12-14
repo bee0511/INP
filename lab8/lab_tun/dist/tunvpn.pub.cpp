@@ -109,7 +109,7 @@ int ifreq_set_broadcast(int fd, const char *dev, unsigned int addr) {
 int tunvpn_server(int port) {
     // create socket
     int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock < 0) errquit("socket");
+    if (sock < 0) errquit("UDP socket");
 
     // create tun0 device
     char tun_name[IFNAMSIZ];
@@ -130,45 +130,79 @@ int tunvpn_server(int port) {
     ifreq_set_broadcast(sock, "tun0", broadcast_ip);
     printf("Virtual IP: %u.%u.%u.%u\n", NIPQUAD(ip));
 
-    // bind socket
-    struct sockaddr_in addr;
-    addr.sin_family = AF_INET;
-    addr.sin_port = htons(port);
+    // bind UDP socket
+    struct sockaddr_in UDP_addr;
+    UDP_addr.sin_family = AF_INET;
+    UDP_addr.sin_port = htons(port);
     // get server IP by server's name: server
     struct hostent *he = gethostbyname("server");
     if (he == NULL) errquit("gethostbyname");
-    addr.sin_addr = *(struct in_addr *)he->h_addr;
-    printf("Server address: %u.%u.%u.%u\n", NIPQUAD(addr.sin_addr.s_addr));
-    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) errquit("bind");
+    UDP_addr.sin_addr = *(struct in_addr *)he->h_addr;
+    printf("Server address: %u.%u.%u.%u\n", NIPQUAD(UDP_addr.sin_addr.s_addr));
+    if (bind(sock, (struct sockaddr *)&UDP_addr, sizeof(UDP_addr)) < 0) errquit("bind");
 
-    // Use while loop to receive packet from client
+    // create raw socket
+    int raw_sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (raw_sock < 0) errquit("raw socket");
+
     struct Packet packet;
     std::vector<uint32_t> address_table;  // store virtual client address
+
+    // set up select
+    fd_set readset;
+    int maxfd = std::max(sock, raw_sock);
+    maxfd = std::max(maxfd, tun_fd);
+    char buffer[BUF_SIZE];
+    memset(buffer, 0, sizeof(buffer));
+
+    // Use while loop recv message from UDP socket or raw socket
     while (true) {
-        printf("Receiving packet from client...\n");
-        socklen_t addrlen = sizeof(addr);
-        int n = recvfrom(sock, &packet, sizeof(packet), 0, (struct sockaddr *)&addr, &addrlen);
-        if (n < 0) errquit("recvfrom");
-        printf("Recv packet from client\n");
-        // check if the packet is config packet
-        if (packet.virtual_ip == 0) {
-            // Assign virtual IP to client
-            packet.virtual_ip = htonl(ADDRBASE + address_table.size());
-            packet.src_addr = htonl(MYADDR);
-            packet.dst_addr = packet.virtual_ip;
-            // store virtual client address
-            address_table.push_back(packet.virtual_ip);
-            // send config packet to client
-            printf("Send config packet to client\n");
-            n = sendto(sock, &packet, sizeof(packet), 0, (struct sockaddr *)&addr, sizeof(addr));
-            if (n < 0) errquit("sendto");
-        } else {
-            // send packet to client
-            printf("Send packet to client\n");
-            n = sendto(sock, &packet, sizeof(packet), 0, (struct sockaddr *)&addr, sizeof(addr));
-            if (n < 0) errquit("sendto");
+        FD_ZERO(&readset);
+        FD_SET(sock, &readset);
+        FD_SET(raw_sock, &readset);
+        FD_SET(tun_fd, &readset);
+        int nready = select(maxfd + 1, &readset, NULL, NULL, NULL);
+        if (nready < 0) errquit("select");
+        if (FD_ISSET(sock, &readset)) {
+            // recv packet from client
+            socklen_t addrlen = sizeof(UDP_addr);
+            int n = recvfrom(sock, &packet, sizeof(packet), 0, (struct sockaddr *)&UDP_addr, &addrlen);
+            if (n < 0) errquit("UDP recvfrom");
+            printf("[Server] Received UDP packet from client\n");
+            printf("length: %d\n", n);
+            if (packet.virtual_ip == 0) {
+                // send config packet to client
+                packet.virtual_ip = htonl(ADDRBASE + address_table.size());
+                n = sendto(sock, &packet, sizeof(packet), 0, (struct sockaddr *)&UDP_addr, sizeof(UDP_addr));
+                if (n < 0) errquit("sendto");
+                printf("Assign virtual IP: %u.%u.%u.%u to client\n", NIPQUAD(packet.virtual_ip));
+                // add virtual IP to address table
+                address_table.push_back(packet.virtual_ip);
+            }
+        }
+        if (FD_ISSET(tun_fd, &readset)) {
+            // recv packet from tun0
+            int n = read(tun_fd, buffer, sizeof(buffer));
+            if (n < 0) errquit("tun read");
+            printf("[Server] Received packet from tun0\n");
+        }
+        if (FD_ISSET(raw_sock, &readset)) {
+            // recv ping from client
+            struct sockaddr_in raw_addr;
+            socklen_t addrlen = sizeof(raw_addr);
+            int n = recvfrom(raw_sock, buffer, sizeof(buffer), 0, (struct sockaddr *)&raw_addr, &addrlen);
+            printf("[Server] Received raw packet from client\n");
+            if (n < 0) errquit("Raw recvfrom");
+
+            struct iphdr *iph = (struct iphdr *)buffer;
+            struct icmphdr *icmph = (struct icmphdr *)(buffer + iph->ihl * 4);
+
+            if (icmph->type == ICMP_ECHO) {
+                std::cout << "Received ICMP packet" << std::endl;
+            }
         }
     }
+
     pause();
 
     return 0;
@@ -224,6 +258,16 @@ int tunvpn_client(const char *server, int port) {
     ifreq_set_broadcast(sock, "tun0", broadcast_ip);
     printf("Virtual IP: %u.%u.%u.%u\n", NIPQUAD(ip));
 
+    while (1) {
+        char buffer[BUF_SIZE];
+        memset(buffer, 0, sizeof(buffer));
+        int n = read(tun_fd, buffer, sizeof(buffer));
+        if (n < 0) errquit("tun read");
+        // send the buffer to server
+        n = sendto(sock, buffer, sizeof(buffer), 0, (struct sockaddr *)&addr, sizeof(addr));
+        if (n < 0) errquit("sendto");
+        printf("Send packet to server\n");
+    }
     pause();
     return 0;
 }
