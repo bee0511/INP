@@ -40,3 +40,40 @@ struct Packet {
     uint32_t src_addr;  // source address
     uint32_t dst_addr;  // destination address
 };
+
+struct icmpheader {
+    unsigned char icmp_type;
+    unsigned char icmp_code;
+    unsigned short int icmp_chksum;
+};
+
+struct icmpecho {
+    struct icmpheader icmp;
+    unsigned short int id;
+    unsigned short int seq;
+};
+
+struct ipheader {
+    unsigned char iph_ihl : 4, iph_ver : 4;
+    unsigned char iph_tos;
+    unsigned short int iph_len;
+    unsigned short int iph_ident;
+    unsigned char iph_flag : 3, iph_offset : 13;
+    unsigned char iph_ttl;
+    unsigned char iph_protocol;
+    unsigned short int iph_chksum;
+    unsigned int iph_sourceip;
+    unsigned int iph_destip;
+};
+
+int tun_alloc(char *dev);
+int ifreq_set_mtu(int fd, const char *dev, int mtu);
+int ifreq_get_flag(int fd, const char *dev, short *flag);
+int ifreq_set_flag(int fd, const char *dev, short flag);
+int ifreq_set_sockaddr(int fd, const char *dev, int cmd, unsigned int addr);
+int ifreq_set_addr(int fd, const char *dev, unsigned int addr);
+int ifreq_set_netmask(int fd, const char *dev, unsigned int addr);
+int ifreq_set_broadcast(int fd, const char *dev, unsigned int addr);
+int tunvpn_server(int port);
+int tunvpn_client(const char *server, int port);
+int usage(const char *progname);

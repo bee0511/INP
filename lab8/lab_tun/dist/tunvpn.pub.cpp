@@ -5,106 +5,6 @@
  */
 #include "header.hpp"
 
-/*
-Allocate a tun device.
-The size of dev must be at least IFNAMSIZ long.
-It can be an empty string, where the system will automatically generate the device name.
-Alternatively, a user may choose a specific tunNN device name.
-The return value is the descriptor to the opened tun device.
-*/
-int tun_alloc(char *dev) {
-    struct ifreq ifr;
-    int fd, err;
-    if ((fd = open("/dev/net/tun", O_RDWR)) < 0)
-        return -1;
-    memset(&ifr, 0, sizeof(ifr));
-    ifr.ifr_flags = IFF_TUN | IFF_NO_PI; /* IFF_TUN (L3), IFF_TAP (L2), IFF_NO_PI (w/ header) */
-    if (dev && dev[0] != '\0') strncpy(ifr.ifr_name, dev, IFNAMSIZ);
-    if ((err = ioctl(fd, TUNSETIFF, (void *)&ifr)) < 0) {
-        close(fd);
-        return err;
-    }
-    if (dev) strcpy(dev, ifr.ifr_name);
-    return fd;
-}
-
-int ifreq_set_mtu(int fd, const char *dev, int mtu) {
-    struct ifreq ifr;
-    memset(&ifr, 0, sizeof(ifr));
-    ifr.ifr_mtu = mtu;
-    if (dev) strncpy(ifr.ifr_name, dev, IFNAMSIZ);
-    return ioctl(fd, SIOCSIFMTU, &ifr);
-}
-
-/*
-int ifreq_{set|get}_flag(int fd, const char *dev, ...):
-Set the flag value of a given network device dev.
-Generally, you must call ifreq_get_flag first to obtain the current flag value,
-modify the flag value, and then call ifreq_set_flag to update the flag value.
-To bring up a network interface, mark the IFF_UP in the flag using the OR operation.
-*/
-int ifreq_get_flag(int fd, const char *dev, short *flag) {
-    int err;
-    struct ifreq ifr;
-    memset(&ifr, 0, sizeof(ifr));
-    if (dev) strncpy(ifr.ifr_name, dev, IFNAMSIZ);
-    err = ioctl(fd, SIOCGIFFLAGS, &ifr);
-    if (err == 0) {
-        *flag = ifr.ifr_flags;
-    }
-    return err;
-}
-
-/*
-int ifreq_{set|get}_flag(int fd, const char *dev, ...):
-Set the flag value of a given network device dev.
-Generally, you must call ifreq_get_flag first to obtain the current flag value,
-modify the flag value, and then call ifreq_set_flag to update the flag value.
-To bring up a network interface, mark the IFF_UP in the flag using the OR operation.
-*/
-int ifreq_set_flag(int fd, const char *dev, short flag) {
-    struct ifreq ifr;
-    memset(&ifr, 0, sizeof(ifr));
-    if (dev) strncpy(ifr.ifr_name, dev, IFNAMSIZ);
-    ifr.ifr_flags = flag;
-    return ioctl(fd, SIOCSIFFLAGS, &ifr);
-}
-
-int ifreq_set_sockaddr(int fd, const char *dev, int cmd, unsigned int addr) {
-    struct ifreq ifr;
-    struct sockaddr_in sin;
-    sin.sin_family = AF_INET;
-    sin.sin_addr.s_addr = addr;
-    memset(&ifr, 0, sizeof(ifr));
-    memcpy(&ifr.ifr_addr, &sin, sizeof(struct sockaddr));
-    if (dev) strncpy(ifr.ifr_name, dev, IFNAMSIZ);
-    return ioctl(fd, cmd, &ifr);
-}
-
-/*
-Set the IPv4 network of a given network device dev.
-The fd parameter must be a valid socket.
-*/
-int ifreq_set_addr(int fd, const char *dev, unsigned int addr) {
-    return ifreq_set_sockaddr(fd, dev, SIOCSIFADDR, addr);
-}
-
-/*
-Set the netmask of a given network device dev.
-The fd parameter must be a valid socket.
-*/
-int ifreq_set_netmask(int fd, const char *dev, unsigned int addr) {
-    return ifreq_set_sockaddr(fd, dev, SIOCSIFNETMASK, addr);
-}
-
-/*
-Set the broadcast address of a given network device dev.
-The fd parameter must be a valid socket.
-*/
-int ifreq_set_broadcast(int fd, const char *dev, unsigned int addr) {
-    return ifreq_set_sockaddr(fd, dev, SIOCSIFBRDADDR, addr);
-}
-
 // XXX: implement your server codes here ...
 int tunvpn_server(int port) {
     // create socket
@@ -141,17 +41,12 @@ int tunvpn_server(int port) {
     printf("Server address: %u.%u.%u.%u\n", NIPQUAD(UDP_addr.sin_addr.s_addr));
     if (bind(sock, (struct sockaddr *)&UDP_addr, sizeof(UDP_addr)) < 0) errquit("bind");
 
-    // create raw socket
-    int raw_sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-    if (raw_sock < 0) errquit("raw socket");
-
     struct Packet packet;
-    std::vector<uint32_t> address_table;  // store virtual client address
+    std::vector<struct sockaddr_in> client_addr;  // client address table
 
     // set up select
     fd_set readset;
-    int maxfd = std::max(sock, raw_sock);
-    maxfd = std::max(maxfd, tun_fd);
+    int maxfd = std::max(sock, tun_fd);
     char buffer[BUF_SIZE];
     memset(buffer, 0, sizeof(buffer));
 
@@ -159,46 +54,62 @@ int tunvpn_server(int port) {
     while (true) {
         FD_ZERO(&readset);
         FD_SET(sock, &readset);
-        FD_SET(raw_sock, &readset);
-        FD_SET(tun_fd, &readset);
         int nready = select(maxfd + 1, &readset, NULL, NULL, NULL);
         if (nready < 0) errquit("select");
         if (FD_ISSET(sock, &readset)) {
-            // recv packet from client
+            // recv packet from client and save into buffer
             socklen_t addrlen = sizeof(UDP_addr);
-            int n = recvfrom(sock, &packet, sizeof(packet), 0, (struct sockaddr *)&UDP_addr, &addrlen);
+            ssize_t n = recvfrom(sock, &buffer, sizeof(buffer), 0, (struct sockaddr *)&UDP_addr, &addrlen);
             if (n < 0) errquit("UDP recvfrom");
-            printf("[Server] Received UDP packet from client\n");
-            printf("length: %d\n", n);
-            if (packet.virtual_ip == 0) {
-                // send config packet to client
-                packet.virtual_ip = htonl(ADDRBASE + address_table.size());
-                n = sendto(sock, &packet, sizeof(packet), 0, (struct sockaddr *)&UDP_addr, sizeof(UDP_addr));
+            // printf("Received UDP packet from client\n");
+
+            // use the return value of recvfrom to get the actual size of data
+            ssize_t size = n;
+            printf("Packet size: %zd\n", size);
+
+            if (size == sizeof(packet)) {
+                // cast buffer to packet
+                memcpy(&packet, buffer, sizeof(packet));
+                // check if the packet is config packet
+                if (packet.virtual_ip == 0) {
+                    // send config packet to client
+                    packet.virtual_ip = htonl(ADDRBASE + client_addr.size());
+                    n = sendto(sock, &packet, sizeof(packet), 0, (struct sockaddr *)&UDP_addr, sizeof(UDP_addr));
+                    if (n < 0) errquit("sendto");
+                    printf("Assign virtual IP: %u.%u.%u.%u to client\n", NIPQUAD(packet.virtual_ip));
+                    // add virtual IP to address table
+                    client_addr.push_back(UDP_addr);
+                    // print the UDP address of client
+                    printf("Client address: %u.%u.%u.%u\n", NIPQUAD(UDP_addr.sin_addr.s_addr));
+                }
+            } else {
+                // send packet to tun0
+                n = write(tun_fd, buffer, size);
+                if (n < 0) errquit("tun write");
+
+                // recv packet from tun0
+                n = read(tun_fd, buffer, sizeof(buffer));
+                if (n < 0) errquit("tun read");
+                ssize_t size = n;
+
+                // parse the packet
+                struct ipheader *iph = (struct ipheader *)buffer;
+                struct icmpheader *icmph = (struct icmpheader *)(buffer + sizeof(struct ipheader));
+                if (icmph->icmp_type == ICMP_ECHO || icmph->icmp_type == ICMP_ECHOREPLY) {
+                    struct icmpecho *echo = (struct icmpecho *)icmph;
+                    printf("ICMP id: %u\n", ntohs(echo->id));
+                    printf("ICMP seq: %u\n", ntohs(echo->seq));
+                    printf("ICMP type: %u\n", icmph->icmp_type);
+                    printf("ICMP code: %u\n", icmph->icmp_code);
+                    //print source IP
+                    printf("Source IP: %u.%u.%u.%u\n", NIPQUAD(iph->iph_sourceip));
+                    //print destination IP
+                    printf("Destination IP: %u.%u.%u.%u\n", NIPQUAD(iph->iph_destip));
+                }
+
+                // send packet to client, dont use table
+                n = sendto(sock, buffer, size, 0, (struct sockaddr *)&UDP_addr, sizeof(UDP_addr));
                 if (n < 0) errquit("sendto");
-                printf("Assign virtual IP: %u.%u.%u.%u to client\n", NIPQUAD(packet.virtual_ip));
-                // add virtual IP to address table
-                address_table.push_back(packet.virtual_ip);
-            }
-        }
-        if (FD_ISSET(tun_fd, &readset)) {
-            // recv packet from tun0
-            int n = read(tun_fd, buffer, sizeof(buffer));
-            if (n < 0) errquit("tun read");
-            printf("[Server] Received packet from tun0\n");
-        }
-        if (FD_ISSET(raw_sock, &readset)) {
-            // recv ping from client
-            struct sockaddr_in raw_addr;
-            socklen_t addrlen = sizeof(raw_addr);
-            int n = recvfrom(raw_sock, buffer, sizeof(buffer), 0, (struct sockaddr *)&raw_addr, &addrlen);
-            printf("[Server] Received raw packet from client\n");
-            if (n < 0) errquit("Raw recvfrom");
-
-            struct iphdr *iph = (struct iphdr *)buffer;
-            struct icmphdr *icmph = (struct icmphdr *)(buffer + iph->ihl * 4);
-
-            if (icmph->type == ICMP_ECHO) {
-                std::cout << "Received ICMP packet" << std::endl;
             }
         }
     }
@@ -264,23 +175,18 @@ int tunvpn_client(const char *server, int port) {
         int n = read(tun_fd, buffer, sizeof(buffer));
         if (n < 0) errquit("tun read");
         // send the buffer to server
-        n = sendto(sock, buffer, sizeof(buffer), 0, (struct sockaddr *)&addr, sizeof(addr));
-        if (n < 0) errquit("sendto");
-        printf("Send packet to server\n");
+        int sent = sendto(sock, buffer, n, 0, (struct sockaddr *)&addr, sizeof(addr));
+        if (sent < 0) errquit("sendto");
+        // printf("Send packet to server\n");
+        int recv = recvfrom(sock, buffer, sizeof(buffer), 0, (struct sockaddr *)&addr, &addrlen);
+        if (recv < 0) errquit("recvfrom");
+        // printf("Recv packet from server\n");
+        // write the buffer to tun0
+        n = write(tun_fd, buffer, recv);
+        if (n < 0) errquit("tun write");
     }
     pause();
     return 0;
-}
-
-int usage(const char *progname) {
-    fprintf(stderr,
-            "usage: %s {server|client} {options ...}\n"
-            "# server mode:\n"
-            "	%s server port\n"
-            "# client mode:\n"
-            "	%s client servername serverport\n",
-            progname, progname, progname);
-    return -1;
 }
 
 int main(int argc, char *argv[]) {
