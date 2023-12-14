@@ -3,40 +3,7 @@
  *  by Chun-Ying Huang <chuang@cs.nctu.edu.tw>
  *  License: GPLv2
  */
-
-/*
-A VPN network can be considered an overlay network built on top of an existing network.
-In our lab setting, a physical network 172.28.28.0/24 is created for direct communications
-between a server and clients in the network. We aim to build a VPN network 10.0.0.0/24 on top
-of the physical network. All the clients who join the VPN network can communicate with each
-other using the addresses in the 10.0.0.0/24 network
-*/
-
-#include <arpa/inet.h>
-#include <ctype.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <linux/if.h>
-#include <linux/if_tun.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <netinet/ip.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
-
-#define NIPQUAD(m) ((unsigned char *)&(m))[0], ((unsigned char *)&(m))[1], ((unsigned char *)&(m))[2], ((unsigned char *)&(m))[3]
-#define errquit(m) \
-    {              \
-        perror(m); \
-        exit(-1);  \
-    }
-
-#define MYADDR 0x0a0000fe
-#define ADDRBASE 0x0a00000a
-#define NETMASK 0xffffff00
+#include "header.hpp"
 
 /*
 Allocate a tun device.
@@ -138,17 +105,126 @@ int ifreq_set_broadcast(int fd, const char *dev, unsigned int addr) {
     return ifreq_set_sockaddr(fd, dev, SIOCSIFBRDADDR, addr);
 }
 
+// XXX: implement your server codes here ...
 int tunvpn_server(int port) {
-    // XXX: implement your server codes here ...
-    fprintf(stderr, "## [server] starts ...\n");
+    // create socket
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) errquit("socket");
+
+    // create tun0 device
+    char tun_name[IFNAMSIZ];
+    int32_t tun_fd = tun_alloc(tun_name);
+    int16_t flag;
+    int32_t ip = htonl(MYADDR);
+    int32_t broadcast_ip = htonl(MYADDR + 1);
+    int32_t netmask = htonl(NETMASK);
+    int32_t mtu = 1400;
+    if (tun_fd < 0) errquit("tun_alloc");
+
+    // set tun0 device
+    ifreq_set_mtu(sock, "tun0", mtu);
+    ifreq_get_flag(sock, "tun0", &flag);
+    ifreq_set_flag(sock, "tun0", flag | IFF_UP | IFF_RUNNING);
+    ifreq_set_addr(sock, "tun0", ip);
+    ifreq_set_netmask(sock, "tun0", netmask);
+    ifreq_set_broadcast(sock, "tun0", broadcast_ip);
+    printf("Virtual IP: %u.%u.%u.%u\n", NIPQUAD(ip));
+
+    // bind socket
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    // get server IP by server's name: server
+    struct hostent *he = gethostbyname("server");
+    if (he == NULL) errquit("gethostbyname");
+    addr.sin_addr = *(struct in_addr *)he->h_addr;
+    printf("Server address: %u.%u.%u.%u\n", NIPQUAD(addr.sin_addr.s_addr));
+    if (bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) errquit("bind");
+
+    // Use while loop to receive packet from client
+    struct Packet packet;
+    std::vector<uint32_t> address_table;  // store virtual client address
+    while (true) {
+        printf("Receiving packet from client...\n");
+        socklen_t addrlen = sizeof(addr);
+        int n = recvfrom(sock, &packet, sizeof(packet), 0, (struct sockaddr *)&addr, &addrlen);
+        if (n < 0) errquit("recvfrom");
+        printf("Recv packet from client\n");
+        // check if the packet is config packet
+        if (packet.virtual_ip == 0) {
+            // Assign virtual IP to client
+            packet.virtual_ip = htonl(ADDRBASE + address_table.size());
+            packet.src_addr = htonl(MYADDR);
+            packet.dst_addr = packet.virtual_ip;
+            // store virtual client address
+            address_table.push_back(packet.virtual_ip);
+            // send config packet to client
+            printf("Send config packet to client\n");
+            n = sendto(sock, &packet, sizeof(packet), 0, (struct sockaddr *)&addr, sizeof(addr));
+            if (n < 0) errquit("sendto");
+        } else {
+            // send packet to client
+            printf("Send packet to client\n");
+            n = sendto(sock, &packet, sizeof(packet), 0, (struct sockaddr *)&addr, sizeof(addr));
+            if (n < 0) errquit("sendto");
+        }
+    }
+    pause();
 
     return 0;
 }
 
+// XXX: implement your client codes here ...
 int tunvpn_client(const char *server, int port) {
-    // XXX: implement your client codes here ...
-    fprintf(stderr, "## [client] starts ...\n");
+    // create UDP socket
+    int sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sock < 0) errquit("socket");
 
+    // connect to the server
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    // get server IP by server's name: server
+    struct hostent *he = gethostbyname("server");
+    if (he == NULL) errquit("gethostbyname");
+    addr.sin_addr = *(struct in_addr *)he->h_addr;
+    // print address
+    printf("Server address: %u.%u.%u.%u\n", NIPQUAD(addr.sin_addr.s_addr));
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) errquit("connect");
+
+    // use sendto to send packet to server
+    struct Packet config;
+
+    printf("Send config packet to server\n");
+    int n = sendto(sock, &config, sizeof(config), 0, (struct sockaddr *)&addr, sizeof(addr));
+    if (n < 0) errquit("sendto");
+
+    printf("Receiving config packet from server...\n");
+    // recv config packet from server
+    socklen_t addrlen = sizeof(addr);
+    n = recvfrom(sock, &config, sizeof(config), 0, (struct sockaddr *)&addr, &addrlen);
+    if (n < 0) errquit("recvfrom");
+    printf("Recv config packet from server\n");
+    // create tun0 device
+    char tun_name[IFNAMSIZ] = "tun0";
+    int32_t tun_fd = tun_alloc(tun_name);
+    int16_t flag;
+    int32_t ip = config.virtual_ip;
+    int32_t broadcast_ip = htonl(MYADDR + 1);
+    int32_t netmask = htonl(NETMASK);
+    int32_t mtu = 1400;
+    if (tun_fd < 0) errquit("tun_alloc");
+
+    // set tun0 device
+    ifreq_set_mtu(sock, "tun0", mtu);
+    ifreq_get_flag(sock, "tun0", &flag);
+    ifreq_set_flag(sock, "tun0", flag | IFF_UP | IFF_RUNNING);
+    ifreq_set_addr(sock, "tun0", ip);
+    ifreq_set_netmask(sock, "tun0", netmask);
+    ifreq_set_broadcast(sock, "tun0", broadcast_ip);
+    printf("Virtual IP: %u.%u.%u.%u\n", NIPQUAD(ip));
+
+    pause();
     return 0;
 }
 
