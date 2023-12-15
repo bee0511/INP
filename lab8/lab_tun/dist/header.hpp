@@ -17,8 +17,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstring>
 #include <iostream>
+#include <map>
 #include <vector>
 
 #define NIPQUAD(m) ((unsigned char *)&(m))[0], ((unsigned char *)&(m))[1], ((unsigned char *)&(m))[2], ((unsigned char *)&(m))[3]
@@ -37,33 +39,6 @@
 #define BUF_SIZE 1500
 struct Packet {
     uint32_t virtual_ip;
-    uint32_t src_addr;  // source address
-    uint32_t dst_addr;  // destination address
-};
-
-struct icmpheader {
-    unsigned char icmp_type;
-    unsigned char icmp_code;
-    unsigned short int icmp_chksum;
-};
-
-struct icmpecho {
-    struct icmpheader icmp;
-    unsigned short int id;
-    unsigned short int seq;
-};
-
-struct ipheader {
-    unsigned char iph_ihl : 4, iph_ver : 4;
-    unsigned char iph_tos;
-    unsigned short int iph_len;
-    unsigned short int iph_ident;
-    unsigned char iph_flag : 3, iph_offset : 13;
-    unsigned char iph_ttl;
-    unsigned char iph_protocol;
-    unsigned short int iph_chksum;
-    unsigned int iph_sourceip;
-    unsigned int iph_destip;
 };
 
 int tun_alloc(char *dev);
