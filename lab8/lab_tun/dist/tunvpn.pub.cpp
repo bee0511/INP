@@ -89,11 +89,12 @@ int tunvpn_server(int port) {
                     client_num++;
 
 #ifdef DUMPIP
-                    printf("Client address table:\n");
+                    printf("------Client address table------\n");
                     for (auto it = client_addr.begin(); it != client_addr.end(); it++) {
                         printf("Virtual IP: %u.%u.%u.%u\n", NIPQUAD(it->first));
                         printf("Client address: %u.%u.%u.%u\n", NIPQUAD(it->second.sin_addr.s_addr));
                     }
+                    printf("--------------------------------\n");
 #endif
                     // print the UDP address of client
                     printf("Client actual address: %u.%u.%u.%u\n", NIPQUAD(UDP_addr.sin_addr.s_addr));
@@ -125,6 +126,7 @@ int tunvpn_server(int port) {
             struct sockaddr_in client = it->second;
 #ifdef DUMPINFO
             printf("Send packet to IP: %u.%u.%u.%u\n", NIPQUAD(it->first));
+            printf("----------------------------------------\n");
 #endif
             n = sendto(sock, buffer, n, 0, (struct sockaddr *)&client, sizeof(client));
             if (n < 0) errquit("sendto");
@@ -156,7 +158,8 @@ int tunvpn_server(int port) {
             // send packet to client
             struct sockaddr_in client = it->second;
 #ifdef DUMPINFO
-            printf("Send packet to IP: %u.%u.%u.%u\n", NIPQUAD(it->first));
+            printf("Send UDP packet to IP: %u.%u.%u.%u\n", NIPQUAD(it->first));
+            printf("----------------------------------------\n");
 #endif
             n = sendto(sock, buffer, n, 0, (struct sockaddr *)&client, sizeof(client));
             if (n < 0) errquit("sendto");
@@ -258,6 +261,10 @@ int tunvpn_client(const char *server, int port) {
             }
             // send packet to tun0
             n = write(tun_fd, buffer, n);
+#ifdef DUMPINFO
+            printf("Send packet to tun0\n");
+            printf("----------------------------------------\n");
+#endif
             if (n < 0) errquit("tun write");
         }
         // recv packet from tun0
@@ -274,7 +281,7 @@ int tunvpn_client(const char *server, int port) {
             struct iphdr *ip = (struct iphdr *)buffer;
 
 // dump the ip header
-#ifdef DUMP
+#ifdef DUMPIP
             printf("IP header: ");
             // printf("tos: %d, ", ip->tos);
             // printf("tot_len: %d, ", ip->tot_len);
@@ -289,6 +296,10 @@ int tunvpn_client(const char *server, int port) {
 
             // send the buffer to server
             n = sendto(sock, buffer, n, 0, (struct sockaddr *)&addr, sizeof(addr));
+#ifdef DUMPINFO
+            printf("Send packet to IP: %u.%u.%u.%u\n", NIPQUAD(addr.sin_addr.s_addr));
+            printf("----------------------------------------\n");
+#endif
             if (n < 0) errquit("sendto");
         }
     }
