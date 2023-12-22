@@ -10,10 +10,10 @@ CFLAGS = -Wall -Wextra -Wpedantic -std=c++17
 LFLAGS = 
 
 # Target
-TARGET = hw2_chat_server
+TARGET = hw2_chat_server server chatroom
 
 # Source files
-SRC = hw2_chat_server.cpp
+SRC = hw2_chat_server.cpp server.cpp chatroom.cpp
 
 # Object files
 OBJ = $(SRC:.cpp=.o)
@@ -32,5 +32,5 @@ clean:
 	rm -f $(OBJ) $(TARGET)
 
 # Run
-run:	$(TARGET)
-	./$(TARGET) 8080
+run:	hw2_chat_server
+	./hw2_chat_server 8080
