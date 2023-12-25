@@ -306,7 +306,7 @@ std::string Server::deletePinMessage(std::vector<std::string> tokens, int client
     }
     // If there is no pin message in the chat room -> print No pin messages in chat room <number>
     if (chatRooms[client_in_chat_room[client_socket]].pinned_message.first == "") {
-        return "No pin messages in chat room " + std::to_string(client_in_chat_room[client_socket]) + "\n";
+        return "No pin message in chat room " + std::to_string(client_in_chat_room[client_socket]) + "\n";
     }
     // delete the pin message in the chat room
     chatRooms[client_in_chat_room[client_socket]].pinned_message = std::make_pair("", "");
