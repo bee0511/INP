@@ -15,6 +15,7 @@
 #include <vector>
 
 #define MAX_CLIENTS 30
+// #define DEBUG 1
 
 #ifndef _HEADER_HPP_
 #define _HEADER_HPP_

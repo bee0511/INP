@@ -29,9 +29,9 @@ int setupServer(int port) {
         perror("listen");
         exit(EXIT_FAILURE);
     }
-
+#ifdef DEBUG
     std::cout << "Listening on port " << port << std::endl;
-
+#endif
     return server_fd;
 }
 
@@ -92,10 +92,10 @@ int main(int argc, char const *argv[]) {
                 perror("accept");
                 exit(EXIT_FAILURE);
             }
-
+#ifdef DEBUG
             // Inform user of socket number - used in send and receive commands
             std::cout << "New connection, socket fd is " << new_socket << ", ip is : " << inet_ntoa(address.sin_addr) << ", port : " << ntohs(address.sin_port) << std::endl;
-
+#endif
             // Send prompt to the new client
             std::string prompt = "";
             prompt += "*********************************\n";
@@ -110,7 +110,9 @@ int main(int argc, char const *argv[]) {
                 if (client_socket[i] == 0) {
                     client_socket[i] = new_socket;
                     server.addSocket(new_socket);  // add the new socket to the master set
+#ifdef DEBUG
                     std::cout << "Adding to list of sockets as " << i << std::endl;
+#endif
                     break;
                 }
             }
@@ -138,8 +140,9 @@ int main(int argc, char const *argv[]) {
                     std::string message = std::string(buffer, valread);
                     message.pop_back();
 
+#ifdef DEBUG
                     std::cout << "Client " << sd << " sent: " << message << std::endl;
-
+#endif
                     // Handle the command
                     server.handleCommand(sd, message, client_socket);
                 }

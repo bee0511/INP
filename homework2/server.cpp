@@ -355,13 +355,15 @@ std::string Server::listUserinChatRoom(std::vector<std::string> tokens, int clie
     }
     // print out the user and its status in alphabetical order
     std::string response;
-    std::vector<std::string> usernames;
+    std::vector<User *> users;
     for (int client : chatRooms[client_in_chat_room[client_socket]].clients) {
-        usernames.push_back(clients[client]->username);
+        users.push_back(clients[client]);
     }
-    std::sort(usernames.begin(), usernames.end());
-    for (auto username : usernames) {
-        response += username + " " + clients[client_socket]->status + "\n";
+    std::sort(users.begin(), users.end(), [](User *a, User *b) {
+        return a->username < b->username;
+    });
+    for (auto user : users) {
+        response += user->username + " " + user->status + "\n";
     }
     return response;
 }
