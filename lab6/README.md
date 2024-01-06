@@ -121,3 +121,5 @@ The token will be available in the classroom.
 :::
 
 
+- Final Rankings:
+![Alt text](image.png)
